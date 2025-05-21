@@ -1,17 +1,26 @@
-from flask import Flask
-from facebook_oauth.routes import facebook_oauth_blueprint
+from fastapi import FastAPI
+from facebook_oauth.routes import router as facebook_oauth_router
+from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 load_dotenv()
 
-app = Flask(__name__)
-app.config.from_prefixed_env()
+app = FastAPI(title="Facebook OAuth with FastAPI")
 
-app.register_blueprint(facebook_oauth_blueprint, url_prefix='/facebook')
+# Optional: add CORS if frontend will call this API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # adjust in production
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.route('/')
-def index():
-    return {'status': 'ok'}
+app.include_router(facebook_oauth_router, prefix="/facebook")
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+@app.get("/")
+async def root():
+    return {"status": "ok"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=5000, reload=True)

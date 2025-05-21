@@ -1,30 +1,34 @@
-from flask import Blueprint, request, jsonify, redirect
 import os
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_user_pages
 
-facebook_oauth_blueprint = Blueprint('facebook_oauth', __name__)
+router = APIRouter()
 
-@facebook_oauth_blueprint.route('/login')
-def start_oauth():
+@router.get("/login")
+async def start_oauth():
     client_id = os.getenv("FACEBOOK_APP_ID")
     redirect_uri = os.getenv("FACEBOOK_REDIRECT_URI")
-    scope = "pages_messaging"
+    scope = "pages_messaging,pages_show_list"
+
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Facebook app config missing")
 
     auth_url = (
         f"https://www.facebook.com/v19.0/dialog/oauth?"
         f"client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}&response_type=code"
     )
-    return redirect(auth_url)
+    return RedirectResponse(auth_url)
 
-@facebook_oauth_blueprint.route('/callback')
-def oauth_callback():
-    code = request.args.get("code")
+@router.get("/callback")
+async def oauth_callback(request: Request):
+    code = request.query_params.get("code")
     if not code:
-        return jsonify({"error": "Missing code"}), 400
+        raise HTTPException(status_code=400, detail="Missing code")
 
-    token_data = exchange_code_for_token(code)
+    token_data = await exchange_code_for_token(code)
     if "access_token" not in token_data:
-        return jsonify({"error": "Token exchange failed", "details": token_data}), 400
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
-    pages = get_user_pages(token_data["access_token"])
-    return jsonify({"token_data": token_data, "pages": pages})
+    pages = await get_user_pages(token_data["access_token"])
+    return JSONResponse(content={"token_data": token_data, "pages": pages})

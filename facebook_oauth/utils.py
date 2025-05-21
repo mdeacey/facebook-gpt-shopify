@@ -1,7 +1,7 @@
 import os
-import requests
+import httpx
 
-def exchange_code_for_token(code: str):
+async def exchange_code_for_token(code: str):
     url = "https://graph.facebook.com/v19.0/oauth/access_token"
     params = {
         "client_id": os.getenv("FACEBOOK_APP_ID"),
@@ -9,10 +9,15 @@ def exchange_code_for_token(code: str):
         "client_secret": os.getenv("FACEBOOK_APP_SECRET"),
         "code": code
     }
-    response = requests.get(url, params=params)
-    return response.json()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
 
-def get_user_pages(access_token: str):
+async def get_user_pages(access_token: str):
     url = "https://graph.facebook.com/v19.0/me/accounts"
-    response = requests.get(url, params={"access_token": access_token})
-    return response.json()
+    params = {"access_token": access_token}
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
