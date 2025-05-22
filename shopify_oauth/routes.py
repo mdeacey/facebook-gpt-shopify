@@ -11,6 +11,8 @@ async def start_oauth(shop_name: str):
     redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
     scope = "read_products,write_products,read_orders"
 
+    print(f"SHOPIFY_API_KEY: {client_id}, SHOPIFY_REDIRECT_URI: {redirect_uri}, SHOP_NAME: {shop_name}")  # Debug log
+
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Shopify app config missing")
 

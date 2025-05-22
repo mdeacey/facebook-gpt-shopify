@@ -1,18 +1,18 @@
 import os
 import re
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_user_pages
 
 router = APIRouter()
 
 @router.get("/login")
-async def start_oauth(state: str | None = None):
+async def start_oauth():
     client_id = os.getenv("FACEBOOK_APP_ID")
     redirect_uri = os.getenv("FACEBOOK_REDIRECT_URI")
     scope = "pages_messaging,pages_show_list"
 
-    print(f"FACEBOOK_APP_ID: {client_id}, REDIRECT_URI: {redirect_uri}, STATE: {state}")  # Debug log
+    print(f"FACEBOOK_APP_ID: {client_id}, REDIRECT_URI: {redirect_uri}")  # Debug log
 
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Facebook app config missing")
@@ -25,20 +25,15 @@ async def start_oauth(state: str | None = None):
         f"https://www.facebook.com/v19.0/dialog/oauth?"
         f"client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}&response_type=code"
     )
-    if state:
-        auth_url += f"&state={state}"
 
     return RedirectResponse(auth_url)
 
 @router.get("/callback")
 async def oauth_callback(request: Request):
     code = request.query_params.get("code")
-    state = request.query_params.get("state")
 
     if not code:
         raise HTTPException(status_code=400, detail="Missing code parameter")
-    if not state:
-        raise HTTPException(status_code=400, detail="Missing state parameter")
 
     token_data = await exchange_code_for_token(code)
     if "access_token" not in token_data:
@@ -46,5 +41,4 @@ async def oauth_callback(request: Request):
 
     pages = await get_user_pages(token_data["access_token"])
     
-    # Redirect to Shopify OAuth
-    return RedirectResponse(f"/shopify/{state}/login")
+    return JSONResponse(content={"token_data": token_data, "pages": pages})

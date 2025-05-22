@@ -19,11 +19,6 @@ app.add_middleware(
 app.include_router(facebook_oauth_router, prefix="/facebook")
 app.include_router(shopify_oauth_router, prefix="/shopify")
 
-@app.get("/{shop_name}/login")
-async def start_chained_oauth(shop_name: str):
-    # Redirect directly to Facebook OAuth login, passing shop_name in state parameter
-    return RedirectResponse(f"/facebook/login?state={shop_name}")
-
 @app.get("/")
 async def root():
     return {"status": "ok"}
