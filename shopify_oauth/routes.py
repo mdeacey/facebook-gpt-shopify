@@ -9,7 +9,7 @@ router = APIRouter()
 async def start_oauth(shop_name: str):
     client_id = os.getenv("SHOPIFY_API_KEY")
     redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
-    scope = "read_product_listings,read_inventory,read_price_rules,read_discounts,read_content,read_locations,read_marketing_events,read_shipping,read_gift_cards,read_products,read_publications"
+    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products"
 
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Shopify app config missing")
@@ -35,10 +35,8 @@ async def oauth_callback(request: Request):
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
-    # Fetch Shopify data
+    # Fetch and preprocess Shopify data
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
-    
-    # Preprocess the data
     preprocessed_data = preprocess_shopify_data(shopify_data)
 
     return JSONResponse(content={
