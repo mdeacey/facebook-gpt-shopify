@@ -1,5 +1,6 @@
 import os
 import httpx
+import json
 from fastapi import HTTPException
 
 async def exchange_code_for_token(code: str, shop: str):
@@ -273,3 +274,94 @@ async def get_shopify_data(access_token: str, shop: str):
             raise HTTPException(status_code=400, detail=f"GraphQL query failed: {error_message}")
 
         return response_data
+
+def simplify_shopify_data(raw_data: dict) -> dict:
+    """
+    Simplify and normalize Shopify GraphQL response into a clean JSON format,
+    excluding empty lists and dictionaries.
+    """
+    simplified = {
+        "shop": {
+            "name": raw_data["data"]["shop"]["name"],
+            "url": raw_data["data"]["shop"]["primaryDomain"]["url"]
+        }
+    }
+
+    # Initialize products and discounts lists
+    products = []
+    discounts = []
+
+    # Process discount codes
+    for discount in raw_data["data"].get("codeDiscountNodes", {}).get("edges", []):
+        discount = discount["node"]["codeDiscount"]
+        if discount.get("title"):
+            discount_data = {
+                "code": discount["codes"]["edges"][0]["node"]["code"],
+                "title": discount["title"],
+                "percentage": discount["customerGets"]["value"].get("percentage", 0) * 100,
+                "starts_at": discount["startsAt"],
+                "ends_at": discount["endsAt"]
+            }
+            discounts.append(discount_data)
+
+    # Process products
+    for product in raw_data["data"].get("products", {}).get("edges", []):
+        product = product["node"]
+        product_data = {
+            "id": product["id"],
+            "title": product["title"],
+            "type": product["productType"],
+            "vendor": product["vendor"],
+            "tags": product["tags"],
+            "handle": product["handle"],
+            "description": product["description"] or ""
+        }
+
+        # Process metafields
+        metafields = {}
+        for mf in product.get("metafields", {}).get("edges", []):
+            mf = mf["node"]
+            key = mf["key"]
+            value = mf["value"]
+            if key in ["snowboard_length", "snowboard_weight"]:
+                try:
+                    value = json.loads(value)
+                    metafields[key] = {
+                        "value": value["value"],
+                        "unit": value["unit"]
+                    }
+                except json.JSONDecodeError:
+                    metafields[key] = value
+            else:
+                metafields[key] = value
+        if metafields:  # Only include non-empty metafields
+            product_data["metafields"] = metafields
+
+        # Process variants
+        variants = []
+        for var in product.get("variants", {}).get("edges", []):
+            var = var["node"]
+            inventory = var["inventoryItem"]["inventoryLevels"]["edges"]
+            quantity = inventory[0]["node"]["quantities"][0]["quantity"] if inventory else 0
+            variant_data = {
+                "title": var["title"],
+                "price": float(var["price"]),
+                "available": var["availableForSale"],
+                "inventory_quantity": quantity,
+                "location": inventory[0]["node"]["location"]["name"] if inventory else "Unknown"
+            }
+            variants.append(variant_data)
+        if variants:  # Only include non-empty variants
+            product_data["variants"] = variants
+
+        # Only append product if it has meaningful data (e.g., variants or metafields)
+        if variants or metafields:
+            products.append(product_data)
+
+    # Only include non-empty products and discounts in the output
+    if products:
+        simplified["products"] = products
+    if discounts:
+        simplified["discounts"] = discounts
+
+    return simplified
