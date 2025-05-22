@@ -37,36 +37,8 @@ async def oauth_callback(request: Request):
 
     # Fetch Shopify data
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
-    
-    # Extract data from the GraphQL response
-    data = shopify_data.get("data", {})
-    shop_info = data.get("shop", {})
-    products = [edge["node"] for edge in data.get("products", {}).get("edges", [])]
-    price_rules = [edge["node"] for edge in data.get("codeDiscountNodes", {}).get("edges", [])]
-    discount_codes = [edge["node"] for edge in data.get("codeDiscountNodes", {}).get("edges", [])]
-    marketing_events = [edge["node"] for edge in data.get("marketingEvents", {}).get("edges", [])]
-    collections = [edge["node"] for edge in data.get("collections", {}).get("edges", [])]
-    articles = [edge["node"] for edge in data.get("articles", {}).get("edges", [])]
-    blogs = [edge["node"] for edge in data.get("blogs", {}).get("edges", [])]
-    pages = [edge["node"] for edge in data.get("pages", {}).get("edges", [])]
-    inventory_items = [edge["node"] for edge in data.get("inventoryItems", {}).get("edges", [])]
-    product_tags = [edge["node"] for edge in data.get("productTags", {}).get("edges", [])]
-    product_types = [edge["node"] for edge in data.get("productTypes", {}).get("edges", [])]
-    product_variants = [edge["node"] for edge in data.get("productVariants", {}).get("edges", [])]
 
     return JSONResponse(content={
         "token_data": token_data,
-        "shop_info": shop_info,
-        "products": products,
-        "price_rules": price_rules,
-        "discount_codes": discount_codes,
-        "marketing_events": marketing_events,
-        "collections": collections,
-        "articles": articles,
-        "blogs": blogs,
-        "pages": pages,
-        "inventory_items": inventory_items,
-        "product_tags": product_tags,
-        "product_types": product_types,
-        "product_variants": product_variants
+        "shopify_data": shopify_data.get("data", {})
     })
