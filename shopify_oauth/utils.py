@@ -275,15 +275,18 @@ async def get_shopify_data(access_token: str, shop: str):
 
         return response_data
 
-def simplify_shopify_data(raw_data: dict) -> dict:
+def preprocess_shopify_data(raw_data: dict) -> dict:
     """
-    Simplify and normalize Shopify GraphQL response into a clean JSON format,
-    excluding empty lists and dictionaries.
+    Preprocess and normalize Shopify GraphQL response into a clean JSON format,
+    adding full product URLs and excluding empty lists and dictionaries.
     """
-    simplified = {
+    # Get the shop's base URL
+    shop_url = raw_data["data"]["shop"]["primaryDomain"]["url"]
+
+    preprocessed = {
         "shop": {
             "name": raw_data["data"]["shop"]["name"],
-            "url": raw_data["data"]["shop"]["primaryDomain"]["url"]
+            "url": shop_url
         }
     }
 
@@ -304,18 +307,29 @@ def simplify_shopify_data(raw_data: dict) -> dict:
             }
             discounts.append(discount_data)
 
+    # Only include discounts if non-empty
+    if discounts:
+        preprocessed["discounts"] = discounts
+
     # Process products
     for product in raw_data["data"].get("products", {}).get("edges", []):
         product = product["node"]
+        # Construct full product URL
+        product_url = f"{shop_url}/products/{product['handle']}"
+        
         product_data = {
             "id": product["id"],
             "title": product["title"],
             "type": product["productType"],
             "vendor": product["vendor"],
-            "tags": product["tags"],
             "handle": product["handle"],
+            "url": product_url,
             "description": product["description"] or ""
         }
+
+        # Only include tags if non-empty
+        if product["tags"]:
+            product_data["tags"] = product["tags"]
 
         # Process metafields
         metafields = {}
@@ -334,7 +348,8 @@ def simplify_shopify_data(raw_data: dict) -> dict:
                     metafields[key] = value
             else:
                 metafields[key] = value
-        if metafields:  # Only include non-empty metafields
+        # Only include metafields if non-empty
+        if metafields:
             product_data["metafields"] = metafields
 
         # Process variants
@@ -351,17 +366,16 @@ def simplify_shopify_data(raw_data: dict) -> dict:
                 "location": inventory[0]["node"]["location"]["name"] if inventory else "Unknown"
             }
             variants.append(variant_data)
-        if variants:  # Only include non-empty variants
+        # Only include variants if non-empty
+        if variants:
             product_data["variants"] = variants
 
         # Only append product if it has meaningful data (e.g., variants or metafields)
         if variants or metafields:
             products.append(product_data)
 
-    # Only include non-empty products and discounts in the output
+    # Only include products if non-empty
     if products:
-        simplified["products"] = products
-    if discounts:
-        simplified["discounts"] = discounts
+        preprocessed["products"] = products
 
-    return simplified
+    return preprocessed

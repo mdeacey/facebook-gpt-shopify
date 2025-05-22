@@ -1,7 +1,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data, simplify_shopify_data
+from .utils import exchange_code_for_token, get_shopify_data, preprocess_shopify_data
 
 router = APIRouter()
 
@@ -38,10 +38,10 @@ async def oauth_callback(request: Request):
     # Fetch Shopify data
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
     
-    # Simplify the data
-    simplified_data = simplify_shopify_data(shopify_data)
+    # Preprocess the data
+    preprocessed_data = preprocess_shopify_data(shopify_data)
 
     return JSONResponse(content={
         "token_data": token_data,
-        "simplified_data": simplified_data
+        "preprocessed_data": preprocessed_data
     })
