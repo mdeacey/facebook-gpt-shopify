@@ -2,7 +2,7 @@ import os
 import re
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_user_pages
+from .utils import exchange_code_for_token, get_facebook_data
 
 router = APIRouter()
 
@@ -39,6 +39,6 @@ async def oauth_callback(request: Request):
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
-    pages = await get_user_pages(token_data["access_token"])
+    pages = await get_facebook_data(token_data["access_token"])
     
     return JSONResponse(content={"token_data": token_data, "pages": pages})

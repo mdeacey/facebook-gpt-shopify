@@ -14,7 +14,7 @@ async def exchange_code_for_token(code: str):
         response.raise_for_status()
         return response.json()
 
-async def get_user_pages(access_token: str):
+async def get_facebook_data(access_token: str):
     url = "https://graph.facebook.com/v19.0/me/accounts"
     params = {"access_token": access_token}
     async with httpx.AsyncClient() as client:

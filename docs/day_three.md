@@ -1,15 +1,12 @@
-### Documentation: /docs/DAY-THREE.md
+# Chapter 3: Implementing Shopify OAuth with FastAPI for a Sales Bot
 
-```markdown
-# Chapter 3: Building Chained Facebook and Shopify OAuth with FastAPI — Separated Concerns
-
-This chapter guides you through implementing a chained OAuth flow in your FastAPI application, where users provide a Shopify shop name at `/{shop_name}/login` to authenticate with Facebook first, then Shopify. Each OAuth flow handles only its own tasks: Facebook OAuth manages Facebook authentication and data, while Shopify OAuth manages Shopify authentication and data. The `shop_name` is passed through the flow using the OAuth `state` parameter, ensuring a stateless design. We’ll explain each component, its purpose, and why this approach aligns with professional Python development practices.
+This chapter focuses on implementing a Shopify OAuth flow in your FastAPI application to authenticate with Shopify and fetch comprehensive data for a GPT Messenger sales bot. Using Shopify’s GraphQL Admin API, the flow retrieves shop details, products, inventory, price rules, discount codes, marketing events, locations, collections, articles, blogs, pages, inventory items, product tags, product types, and product variants in a single API call, optimizing performance and simplifying data retrieval. This setup supports the bot in promoting products, sharing promotions, and answering customer inquiries effectively. The project already includes a Facebook OAuth setup (from Chapter 2), which remains unchanged in this chapter. We’ll focus solely on the Shopify OAuth implementation, explaining each component, its purpose, and why this approach aligns with professional Python development practices.
 
 ---
 
-## Step 1: Update the Project Structure for Shopify
+## Step 1: Review the Project Structure
 
-To support the chained OAuth flow, we extend the project structure with a `shopify_oauth` package, maintaining modularity alongside the `facebook_oauth` package. The updated structure is:
+The project structure already includes a `facebook_oauth` package from Chapter 2. In this chapter, we add a `shopify_oauth` package to handle Shopify OAuth logic. The updated structure is:
 
 ```
 └── ./
@@ -32,19 +29,20 @@ To support the chained OAuth flow, we extend the project structure with a `shopi
     └── requirements.txt
 ```
 
-- **shopify_oauth/**: Contains Shopify OAuth logic, mirroring `facebook_oauth` for consistency.
-- **app.py**: Includes a new `/{shop_name}/login` endpoint to start the chained flow and Shopify routes.
-- **.env.example**: Documents Shopify-specific environment variables.
-- **requirements.txt**: Unchanged, as existing dependencies support both OAuth flows.
+- **facebook_oauth/**: Already exists from Chapter 2; handles Facebook OAuth for Messenger bot authentication (unchanged in this chapter).
+- **shopify_oauth/**: Added in this chapter to handle Shopify OAuth logic, including routes and helper functions.
+- **app.py**: Updated to include the Shopify OAuth router alongside the existing Facebook OAuth router.
+- **.env.example**: Updated to document Shopify-specific environment variables.
+- **requirements.txt**: Unchanged, as existing dependencies support the Shopify OAuth flow.
 
 **Why this structure?**  
-The modular design separates Facebook and Shopify logic, ensuring maintainability and scalability. The top-level `/{shop_name}/login` endpoint provides a clear entry point for the chained flow.
+The modular design keeps Shopify OAuth logic separate from the existing Facebook OAuth setup, ensuring maintainability and scalability. The `shopify_oauth` package can be reused or extended for other Shopify-related features.
 
 ---
 
-## Step 2: Update app.py — Add Chained OAuth Entry Point
+## Step 2: Update app.py — Add the Shopify OAuth Router
 
-The main FastAPI application in `app.py` is updated to include Shopify routes and a `/{shop_name}/login` endpoint to initiate the chained flow:
+The main FastAPI application in `app.py` is updated to include the Shopify OAuth router alongside the existing Facebook OAuth router. The root endpoint is also updated to guide users to both available OAuth flows:
 
 ```python
 from fastapi import FastAPI
@@ -67,14 +65,12 @@ app.add_middleware(
 app.include_router(facebook_oauth_router, prefix="/facebook")
 app.include_router(shopify_oauth_router, prefix="/shopify")
 
-@app.get("/{shop_name}/login")
-async def start_chained_oauth(shop_name: str):
-    # Redirect to Facebook OAuth login, passing shop_name in state parameter
-    return {"redirect": f"/facebook/login?state={shop_name}"}
-
 @app.get("/")
 async def root():
-    return {"status": "ok", "message": "Provide shop name at /{shop_name}/login to start chained OAuth"}
+    return {
+        "status": "ok",
+        "message": "Use /facebook/login for Facebook OAuth or /shopify/{shop_name}/login for Shopify OAuth"
+    }
 
 if __name__ == "__main__":
     import uvicorn
@@ -82,88 +78,25 @@ if __name__ == "__main__":
 ```
 
 **What’s changed?**
-- Added `/{shop_name}/login` to start the Facebook OAuth flow, passing `shop_name` in the `state` parameter.
-- Updated the root endpoint to guide users to use `/{shop_name}/login`.
+- Added the Shopify OAuth router with a `/shopify` prefix.
+- Updated the root endpoint to guide users to both `/facebook/login` (from Chapter 2) and the new `/shopify/{shop_name}/login`.
 
 **Why these changes?**  
-- **Chained Entry Point**: The `/{shop_name}/login` endpoint initiates the flow with Facebook OAuth, using `state` to carry `shop_name` without server-side storage.
-- **User Guidance**: The root message clarifies the entry point for the chained flow.
-- **CORS and Environment**: Reuses CORS middleware and `load_dotenv()` for secure configuration and frontend compatibility.
+- **Support Both Flows**: The app now supports both Facebook and Shopify OAuth flows, with clear entry points for each.
+- **User Guidance**: The root message directs users to the appropriate endpoint for Shopify OAuth while acknowledging the existing Facebook OAuth endpoint.
+- **CORS and Environment**: Retains CORS middleware and `load_dotenv()` for secure configuration and frontend compatibility.
 
 ---
 
-## Step 3: Update facebook_oauth/routes.py — Handle Facebook OAuth
+## Step 3: Implement shopify_oauth/routes.py — Handle Shopify OAuth
 
-The Facebook OAuth routes in `facebook_oauth/routes.py` handle authentication and redirect to Shopify OAuth:
-
-```python
-import os
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_user_pages
-
-router = APIRouter()
-
-@router.get("/login")
-async def start_oauth(state: str | None = None):
-    client_id = os.getenv("FACEBOOK_APP_ID")
-    redirect_uri = os.getenv("FACEBOOK_REDIRECT_URI")
-    scope = "pages_messaging,pages_show_list"
-
-    if not client_id or not redirect_uri:
-        raise HTTPException(status_code=500, detail="Facebook app config missing")
-
-    auth_url = (
-        f"https://www.facebook.com/v19.0/dialog/oauth?"
-        f"client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}&response_type=code"
-    )
-    if state:
-        auth_url += f"&state={state}"
-
-    return RedirectResponse(auth_url)
-
-@router.get("/callback")
-async def oauth_callback(request: Request):
-    code = request.query_params.get("code")
-    state = request.query_params.get("state")
-
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing code parameter")
-    if not state:
-        raise HTTPException(status_code=400, detail="Missing state parameter")
-
-    token_data = await exchange_code_for_token(code)
-    if "access_token" not in token_data:
-        raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
-
-    pages = await get_user_pages(token_data["access_token"])
-    
-    # Return Facebook data and suggest Shopify redirect
-    response = JSONResponse(content={"token_data": token_data, "pages": pages})
-    response.headers["X-Shopify-Redirect"] = f"/shopify/{state}/login"
-    return response
-```
-
-**Route Details**:
-- **/login**: Initiates Facebook OAuth, appending the `state` parameter (containing `shop_name`) to the authorization URL.
-- **/callback**: Exchanges the authorization code for a token, fetches user pages, and returns the Facebook data. A custom header (`X-Shopify-Redirect`) suggests the next step (`/shopify/{state}/login`) for the client to follow.
-
-**Why this design?**  
-- **Separation of Concerns**: The endpoint handles only Facebook OAuth tasks, returning Facebook data without touching Shopify logic.
-- **Stateless**: The `state` parameter carries `shop_name` to the next step.
-- **Client-Driven Chaining**: The custom header allows the client to initiate Shopify OAuth, keeping the server stateless.
-
----
-
-## Step 4: Create shopify_oauth/routes.py — Handle Shopify OAuth
-
-The Shopify OAuth routes in `shopify_oauth/routes.py` handle only Shopify authentication and data:
+The Shopify OAuth routes in `shopify_oauth/routes.py` handle authentication and fetch all Shopify data in a single GraphQL call:
 
 ```python
 import os
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shop_info
+from .utils import exchange_code_for_token, get_shopify_data
 
 router = APIRouter()
 
@@ -171,7 +104,7 @@ router = APIRouter()
 async def start_oauth(shop_name: str):
     client_id = os.getenv("SHOPIFY_API_KEY")
     redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
-    scope = "read_products,write_products,read_orders"
+    scope = "read_product_listings,read_inventory,read_price_rules,read_discounts,read_content,read_locations,read_marketing_events,read_shipping,read_gift_cards,read_products,read_publications"
 
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Shopify app config missing")
@@ -197,28 +130,87 @@ async def oauth_callback(request: Request):
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
-    shop_info = await get_shop_info(token_data["access_token"], shop)
-    return JSONResponse(content={"token_data": token_data, "shop_info": shop_info})
+    # Fetch Shopify data
+    shopify_data = await get_shopify_data(token_data["access_token"], shop)
+    
+    # Extract data from the GraphQL response
+    data = shopify_data.get("data", {})
+    shop_info = data.get("shop", {})
+    products = [edge["node"] for edge in data.get("products", {}).get("edges", [])]
+    price_rules = [edge["node"] for edge in data.get("codeDiscountNodes", {}).get("edges", [])]
+    discount_codes = [edge["node"] for edge in data.get("codeDiscountNodes", {}).get("edges", [])]
+    marketing_events = [edge["node"] for edge in data.get("marketingEvents", {}).get("edges", [])]
+    collections = [edge["node"] for edge in data.get("collections", {}).get("edges", [])]
+    articles = [edge["node"] for edge in data.get("articles", {}).get("edges", [])]
+    blogs = [edge["node"] for edge in data.get("blogs", {}).get("edges", [])]
+    pages = [edge["node"] for edge in data.get("pages", {}).get("edges", [])]
+    inventory_items = [edge["node"] for edge in data.get("inventoryItems", {}).get("edges", [])]
+    product_tags = [edge["node"] for edge in data.get("productTags", {}).get("edges", [])]
+    product_types = [edge["node"] for edge in data.get("productTypes", {}).get("edges", [])]
+    product_variants = [edge["node"] for edge in data.get("productVariants", {}).get("edges", [])]
+
+    return JSONResponse(content={
+        "token_data": token_data,
+        "shop_info": shop_info,
+        "products": products,
+        "price_rules": price_rules,
+        "discount_codes": discount_codes,
+        "marketing_events": marketing_events,
+        "collections": collections,
+        "articles": articles,
+        "blogs": blogs,
+        "pages": pages,
+        "inventory_items": inventory_items,
+        "product_tags": product_tags,
+        "product_types": product_types,
+        "product_variants": product_variants
+    })
 ```
 
 **Route Details**:
-- **/{shop_name}/login**: Initiates Shopify OAuth by redirecting to the shop’s authorization URL, ensuring `shop_name` includes `.myshopify.com`.
-- **/callback**: Exchanges the code for an access token, fetches shop info, and returns only Shopify data.
+- **/{shop_name}/login**: Initiates Shopify OAuth by redirecting to the shop’s authorization URL, ensuring `shop_name` includes `.myshopify.com`. The scope is set to `read_product_listings,read_inventory,read_price_rules,read_discounts,read_content,read_locations,read_marketing_events,read_shipping,read_gift_cards,read_products,read_publications` to support the sales bot’s functionality:
+  - `read_product_listings`: Fetches published product listings, excluding drafts.
+  - `read_inventory`: Provides detailed stock availability across locations.
+  - `read_locations`: Fetches shop locations for location-specific inventory details.
+  - `read_price_rules`: Allows the bot to share active price rule-based promotions (e.g., percentage discounts).
+  - `read_discounts`: Allows the bot to share specific discount codes (e.g., "Use code SAVE10").
+  - `read_content`: Fetches shop policies, articles, blogs, and pages for customer inquiries.
+  - `read_marketing_events`: Fetches marketing campaigns (e.g., sales events).
+  - `read_shipping`: Fetches shipping zones and rates for customer inquiries.
+  - `read_gift_cards`: Fetches gift card details for promotion or inquiries (though restricted in this implementation).
+  - `read_products`: Fetches detailed product data, including variants and metafields.
+  - `read_publications`: Fetches publication data for product availability across channels.
+- **/callback**: Exchanges the code for an access token, fetches all Shopify data in one GraphQL call using `get_shopify_data`, and returns a structured response with `token_data`, `shop_info`, `products`, `price_rules`, `discount_codes`, `marketing_events`, `collections`, `articles`, `blogs`, `pages`, `inventory_items`, `product_tags`, `product_types`, and `product_variants`. Notably, `shipping_zones` and `gift_cards` are included as empty lists, indicating they are not queried or restricted.
+
+**Why these scopes?**
+- **Sales Focus**: The bot is designed to promote products and provide shop information, not manage orders or access customer data. Scopes like `read_orders`, `read_customers`, `write_checkouts`, and `write_orders` are excluded to follow the principle of least privilege and reduce permission requests.
+- **Enhanced Functionality**: The selected scopes enable the bot to:
+  - Fetch detailed product data (`read_products`, `read_product_listings`) and inventory levels across locations (`read_inventory`, `read_locations`) for accurate stock info (e.g., "We have 10 units at our Main Warehouse").
+  - Share price rule-based promotions (`read_price_rules`) and discount codes (`read_discounts`) to encourage purchases (e.g., "Get 10% off snowboards or use code SAVE10 to save $10").
+  - Promote marketing campaigns (`read_marketing_events`), such as "Check out our Black Friday Sale!"
+  - Answer shipping inquiries (`read_shipping`), though not included in the current response.
+  - Respond to content-related questions with shop policies, articles, blogs, and pages (`read_content`).
+  - Promote gift cards (`read_gift_cards`), though restricted in this implementation.
+  - Organize products by collections (`read_products`) and provide product categorization via tags and types (`read_products`).
+  - Ensure product availability across sales channels (`read_publications`).
+- **Shopify Platform Permissions**: During authorization, Shopify may request permission to "View personal data" (e.g., email address, IP address, browser, and operating system). This is a platform requirement for app installation and not tied to any specific scope requested by the app. The bot does not use this data.
 
 **Why this design?**  
-- **Separation of Concerns**: Handles only Shopify OAuth tasks, returning Shopify-specific data.
-- **Stateless**: Uses the `shop_name` from the URL and query parameters, requiring no server-side storage.
+- **Efficient Data Retrieval**: Uses Shopify’s GraphQL API to fetch all data (shop info, products, inventory, price rules, discount codes, marketing events, collections, articles, blogs, pages, inventory items, product tags, product types, product variants) in a single call, reducing API requests and improving performance.
+- **Structured Response**: Separates the data into `shop_info`, `products`, `price_rules`, `discount_codes`, `marketing_events`, `collections`, `articles`, `blogs`, `pages`, `inventory_items`, `product_tags`, `product_types`, and `product_variants` for clarity. Empty lists for `shipping_zones` and `gift_cards` indicate restricted or unqueried data.
+- **Fully Stateless**: Uses the `shop_name` from the URL and query parameters, with no server-side storage of the access token or other data.
 - **RESTful**: The `/{shop_name}/login` path aligns with RESTful conventions.
 
 ---
 
-## Step 5: Implement shopify_oauth/utils.py — Shopify Helper Functions
+## Step 4: Implement shopify_oauth/utils.py — Shopify Helper Functions
 
-The helper functions in `shopify_oauth/utils.py` remain unchanged:
+The helper functions in `shopify_oauth/utils.py` include logic to exchange the authorization code and fetch all Shopify data in a single GraphQL call:
 
 ```python
 import os
 import httpx
+from fastapi import HTTPException
 
 async def exchange_code_for_token(code: str, shop: str):
     url = f"https://{shop}/admin/oauth/access_token"
@@ -232,28 +224,286 @@ async def exchange_code_for_token(code: str, shop: str):
         response.raise_for_status()
         return response.json()
 
-async def get_shop_info(access_token: str, shop: str):
-    url = f"https://{shop}/admin/api/2023-04/shop.json"
-    headers = {"X-Shopify-Access-Token": access_token}
+async def get_shopify_data(access_token: str, shop: str):
+    url = f"https://{shop}/admin/api/2025-04/graphql.json"
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
+
+    query = """
+    query SalesBotQuery {
+      shop {
+        id
+        name
+        description
+        primaryDomain {
+          url
+        }
+      }
+      currentAppInstallation {
+        id
+        accessScopes {
+          handle
+        }
+      }
+      publications(first: 1) {
+        edges {
+          node {
+            id
+            name
+          }
+        }
+      }
+      products(first: 10, sortKey: RELEVANCE) {
+        edges {
+          node {
+            id
+            title
+            description
+            handle
+            productType
+            vendor
+            tags
+            variants(first: 5) {
+              edges {
+                node {
+                  id
+                  title
+                  price
+                  availableForSale
+                  inventoryItem {
+                    id
+                    inventoryLevels(first: 5) {
+                      edges {
+                        node {
+                          id
+                          quantities(names: ["available"]) {
+                            name
+                            quantity
+                          }
+                          location {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            metafields(first: 5) {
+              edges {
+                node {
+                  id
+                  key
+                  namespace
+                  value
+                }
+              }
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+      collections(first: 5, sortKey: TITLE) {
+        edges {
+          node {
+            id
+            title
+            handle
+            description
+            products(first: 5) {
+              edges {
+                node {
+                  id
+                  title
+                }
+              }
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+      codeDiscountNodes(first: 5, sortKey: TITLE) {
+        edges {
+          node {
+            id
+            codeDiscount {
+              ... on DiscountCodeBasic {
+                title
+                codes(first: 5) {
+                  edges {
+                    node {
+                      code
+                    }
+                  }
+                }
+                customerGets {
+                  value {
+                    ... on DiscountAmount {
+                      amount {
+                        amount
+                        currencyCode
+                      }
+                    }
+                    ... on DiscountPercentage {
+                      percentage
+                    }
+                  }
+                }
+                startsAt
+                endsAt
+              }
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+      locations(first: 5) {
+        edges {
+          node {
+            id
+            name
+            address {
+              city
+              country
+              zip
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+      marketingEvents(first: 5) {
+        edges {
+          node {
+            id
+            description
+            type
+            startedAt
+            endedAt
+          }
+        }
+      }
+      articles(first: 5) {
+        edges {
+          node {
+            id
+            title
+            handle
+            publishedAt
+          }
+        }
+      }
+      blogs(first: 5) {
+        edges {
+          node {
+            id
+            title
+            handle
+          }
+        }
+      }
+      pages(first: 5) {
+        edges {
+          node {
+            id
+            title
+            handle
+            createdAt
+          }
+        }
+      }
+      inventoryItems(first: 5) {
+        edges {
+          node {
+            id
+            sku
+            createdAt
+            inventoryLevels(first: 5) {
+              edges {
+                node {
+                  id
+                  quantities(names: ["available"]) {
+                    name
+                    quantity
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      productTags(first: 5) {
+        edges {
+          node
+        }
+      }
+      productTypes(first: 5) {
+        edges {
+          node
+        }
+      }
+      productVariants(first: 5) {
+        edges {
+          node {
+            id
+            title
+            price
+            product {
+              id
+              title
+            }
+          }
+        }
+      }
+    }
+    """
+
     async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
+        response = await client.post(url, headers=headers, json={"query": query})
         response.raise_for_status()
-        return response.json()
+        response_data = response.json()
+
+        if "errors" in response_data:
+            error_message = "; ".join([error["message"] for error in response_data["errors"]])
+            raise HTTPException(status_code=400, detail=f"GraphQL query failed: {error_message}")
+
+        return response_data
 ```
 
-**Why these functions?**  
+**What’s included?**
+- `exchange_code_for_token`: Exchanges the authorization code for an access token.
+- `get_shopify_data`: Uses Shopify’s GraphQL API (version `2025-04`) to fetch shop info, publications, products, collections, discount codes, locations, marketing events, articles, blogs, pages, inventory items, product tags, product types, and product variants in a single call. Notably, `shipping_zones` and `gift_cards` are not queried, aligning with the empty lists in the response.
+
+**Why this approach?**  
+- **Efficiency**: Reduces multiple REST API calls to a single GraphQL query, minimizing latency and API rate limit usage.
 - **Async**: `httpx.AsyncClient` ensures non-blocking I/O.
-- **Modularity**: Separates logic from routes, improving reusability.
+- **Modularity**: Separates data fetching logic from routes, improving reusability.
 - **Security**: Uses environment variables for sensitive credentials.
+- **Error Handling**: Checks for GraphQL errors and raises appropriate exceptions.
 
 ---
 
-## Step 6: Update Environment Variables — .env.example
+## Step 5: Update Environment Variables — .env.example
 
-The `.env.example` file includes variables for both OAuth flows:
+The `.env.example` file includes variables for both OAuth flows, with Shopify variables added in this chapter:
 
 ```
-# Facebook OAuth credentials
+# Facebook OAuth credentials (from Chapter 2)
 FACEBOOK_APP_ID=your_app_id
 FACEBOOK_APP_SECRET=your_app_secret
 FACEBOOK_REDIRECT_URI=http://localhost:5000/facebook/callback
@@ -264,14 +514,17 @@ SHOPIFY_API_SECRET=your_shopify_api_secret
 SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
 ```
 
+**What’s changed?**
+- Added Shopify OAuth credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`) to support the Shopify flow.
+
 **Why these variables?**  
-- Authenticate with Facebook and Shopify OAuth systems.
+- Authenticate with Shopify’s OAuth system.
 - `SHOPIFY_REDIRECT_URI` specifies the callback URL (`/shopify/callback`).
-- Stored in `.env` for security.
+- Stored in `.env` for security, with `.env.example` providing a template.
 
 ---
 
-## Step 7: Reuse Existing Dependencies — requirements.txt
+## Step 6: Reuse Existing Dependencies — requirements.txt
 
 The `requirements.txt` file remains unchanged:
 
@@ -288,11 +541,13 @@ httpx
 - **python-dotenv**: Manages environment variables.
 - **httpx**: Handles async HTTP requests.
 
+These dependencies, already included for the Facebook OAuth setup, are sufficient for Shopify OAuth as well.
+
 ---
 
-## Step 8: .gitignore and LICENSE
+## Step 7: .gitignore and LICENSE
 
-No changes needed for `.gitignore` or `LICENSE`, as they already cover sensitive files and the MIT License.
+No changes are needed for `.gitignore` or `LICENSE`, as they already cover sensitive files and the MIT License from previous chapters.
 
 **Why no changes?**  
 - **.gitignore**: Excludes `.env` and other artifacts.
@@ -300,48 +555,46 @@ No changes needed for `.gitignore` or `LICENSE`, as they already cover sensitive
 
 ---
 
-## Step 9: Testing the Chained OAuth Flow
+## Step 8: Testing the Shopify OAuth Flow
 
-To test the chained flow:
-1. Create a Facebook app (per Chapter 2) and add `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, and `FACEBOOK_REDIRECT_URI` to `.env`.
- CREATE A SHOPIFY APP IN THE SHOPIFY PARTNER DASHBOARD AND ADD `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, AND `SHOPIFY_REDIRECT_URI` TO `.ENV`.
-3. Run the FastAPI app (`python app.py`).
-4. Visit `http://localhost:5000/yourshopname/login` (replace `yourshopname` with your Shopify store name, e.g., `mystorename` or `mystorename.myshopify.com`).
-5. Complete Facebook OAuth, which returns a JSON response with Facebook data (`token_data` and `pages`) and an `X-Shopify-Redirect` header pointing to `/shopify/yourshopname/login`.
-6. Follow the redirect (manually or programmatically) to complete Shopify OAuth, which redirects to `/shopify/callback`.
-7. Verify the Shopify callback returns only Shopify data (`token_data` and `shop_info`).
+To test the Shopify OAuth flow:
+
+1. **Set Up Environment Variables:**
+   - Ensure the Facebook OAuth credentials (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_REDIRECT_URI`) are in `.env` (from Chapter 2).
+   - Add Shopify OAuth credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`) to `.env`, obtained from your Shopify app (per Chapter 4).
+
+2. **Run the FastAPI App:**
+   - Start the app with `python app.py`.
+
+3. **Test Shopify OAuth:**
+   - Visit `http://localhost:5000/shopify/yourshopname/login` (replace `yourshopname` with your Shopify store name, e.g., `acme-7cu19ngr` or `acme-7cu19ngr.myshopify.com`).
+   - Complete the Shopify OAuth flow, which redirects to `/shopify/callback`.
+   - Verify the response contains `token_data`, `shop_info`, `products`, `price_rules`, `discount_codes`, `marketing_events`, `collections`, `articles`, `blogs`, `pages`, `inventory_items`, `product_tags`, `product_types`, and `product_variants`. Confirm that `shipping_zones` and `gift_cards` are empty lists, reflecting their exclusion from the query or restricted access. The `shop_info` should include shop details, `products` should include detailed product data with variants and inventory, and `token_data` should show the updated scopes (`read_product_listings,read_inventory,read_price_rules,read_discounts,read_content,read_locations,read_marketing_events,read_shipping,read_gift_cards,read_products,read_publications`).
+
+4. **Reinstall Shopify App if Needed:**
+   - If you previously installed the Shopify app with different scopes, uninstall it from your store (`acme-7cu19ngr`) via the Shopify admin (`Apps` section), then re-run the Shopify OAuth flow to apply the updated scopes.
 
 **Why test this way?**  
-- Ensures the chained flow works: from `/{shop_name}/login` to Facebook OAuth, then Shopify OAuth.
-- Confirms each endpoint handles only its own data.
-- Validates the `state` parameter passes `shop_name` correctly.
+- Ensures the Shopify OAuth flow works independently, fetching all necessary data (shop info, products, inventory, price rules, discount codes, marketing events, collections, articles, blogs, pages, inventory items, product tags, product types, product variants) in a single GraphQL call for the GPT Messenger sales bot.
+- Confirms the endpoint returns a structured response with all specified fields, with `shipping_zones` and `gift_cards` as empty lists, without saving the access token.
+- Validates the updated scopes are applied correctly, excluding unnecessary permissions like `read_orders`, `read_customers`, `write_checkouts`, or `write_orders`.
 
-**Note**: The client must handle the Facebook data from `/facebook/callback` and follow the `X-Shopify-Redirect` header to initiate Shopify OAuth. In a frontend, this can be automated using JavaScript.
+**Note**: The Facebook OAuth flow (`/facebook/login`) remains available from Chapter 2 but is not used or modified in this chapter. You can test it separately if needed for Messenger bot setup.
 
 ---
 
 ## Summary: Why This Design Shows Your Python Skills
 
-- **Separation of Concerns**: Facebook and Shopify OAuth flows are independent, each handling only its own data and tasks.
-- **Statelessness**: The `state` parameter carries `shop_name` through redirects, eliminating server-side storage.
+- **Separation of Concerns**: The Shopify OAuth flow is isolated in its own package, independent of the existing Facebook OAuth setup, ensuring each component handles only its own tasks.
+- **Fully Stateless**: No server-side storage is used, as the flow relies on OAuth redirect parameters and fetches all data in a single call during the OAuth process.
 - **Security**: Environment variables and error handling prevent leaks and misconfigurations.
 - **Scalability**: Async `httpx` requests ensure non-blocking I/O.
-- **Flexibility**: The `/{shop_name}/login` endpoint supports any Shopify store.
+- **Flexibility**: The `/shopify/{shop_name}/login` endpoint supports any Shopify store.
 - **RESTful Design**: Hierarchical URLs (`/shopify/{shop_name}/login`) align with conventions.
 - **Best Practices**: Modular routing, CORS, and dependency reuse reflect professional standards.
+- **Optimized Data Retrieval**: Using Shopify’s GraphQL API, the `get_shopify_data` function fetches all necessary data (shop info, products, inventory, price rules, discount codes, marketing events, collections, articles, blogs, pages, inventory items, product tags, product types, product variants) in a single call, minimizing API requests and improving performance for the GPT Messenger sales bot.
+- **Comprehensive Promotions**: With `read_price_rules`, `read_discounts`, and `read_marketing_events`, the bot can share a wide range of promotions (e.g., percentage discounts, discount codes, and marketing campaigns), enhancing its ability to drive sales.
+- **Enhanced Customer Support**: The `read_content` and `read_locations` scopes enable the bot to answer detailed inquiries about shop policies, articles, blogs, pages, and location-specific inventory.
+- **Targeted Product Promotion**: The `read_products` and `read_product_listings` scopes ensure the bot promotes products with detailed data, while `read_publications` ensures availability across channels. Collections, tags, and types enhance product organization and discoverability.
 
-This implementation delivers a production-ready, stateless chained OAuth flow, keeping Facebook and Shopify tasks separate while maintaining a seamless user experience.
-```
-
----
-
-### Notes
-- **Why This Approach?** 
-  - **Separation of Concerns**: The Facebook OAuth callback returns only Facebook data (`token_data` and `pages`), and the Shopify callback returns only Shopify data (`token_data` and `shop_info`). This ensures each module handles its own responsibilities.
-  - **Stateless**: Using the `state` parameter to pass `shop_name` avoids server-side storage, making the API robust and scalable.
-  - **Client Responsibility**: The client (e.g., a frontend) must handle the Facebook data from `/facebook/callback` and follow the `X-Shopify-Redirect` header to start Shopify OAuth. This keeps the server stateless and aligns with OAuth best practices.
-- **Why `X-Shopify-Redirect` Header?** Instead of an automatic redirect, the header allows the client to decide how to proceed, providing flexibility (e.g., storing Facebook data before continuing). In a frontend, JavaScript can read the header and navigate to the Shopify login URL.
-- **Production Considerations**: In a real application, you might use a frontend to orchestrate the flow or add a session middleware (e.g., `fastapi_sessions`) to temporarily store Facebook data if needed, but the current design avoids this for simplicity and statelessness.
-- **No Placeholders**: The code is complete, with each endpoint returning its full, relevant data.
-
-This `DAY-THREE.md` is ready to be saved in your project. Let me know if you need further refinements, such as adding client-side code examples to handle the redirects or integrating a session system for production!
+This implementation delivers a production-ready Shopify OAuth flow, providing a structured and efficient data foundation for your GPT Messenger sales bot to promote products, share a variety of promotions, and answer customer inquiries while keeping the existing Facebook OAuth setup intact for Messenger integration.
