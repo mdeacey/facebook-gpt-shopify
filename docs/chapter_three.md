@@ -1,278 +1,158 @@
-Absolutely — here is the **fully updated Chapter 3**, matching your structure, keeping code and implementation focused, and correcting the `.env` keys for consistency with your actual OAuth variables (`SHOPIFY_API_KEY`, not `CLIENT_ID`, etc.).
+Chapter 3: Launching and Testing the FastAPI Application for Facebook OAuth
+This chapter guides you through launching the FastAPI application, testing the root endpoint, and verifying the Facebook OAuth flow set up in Chapters 1 and 2. We’ll run the app, check the initial response, initiate the OAuth process via /facebook/login, and confirm the callback response at /facebook/callback. Each step includes expected outputs (e.g., server logs, JSON responses) and references to screenshots (not provided) to ensure the integration works correctly. This process confirms that your app can authenticate with Facebook and retrieve access tokens and page data for the GPT Messenger sales bot.
 
----
+Step 1: Launch the FastAPI Application
+Action: Navigate to your project directory and run the FastAPI application using the following command:
+python app.py
 
-# Chapter 3: Implementing Shopify OAuth with FastAPI for a Sales Bot
+Expected Output: The terminal should display Uvicorn server logs indicating the app is running:
+INFO:     Will watch for changes in these directories: ['/workspaces/facebook-gpt-shopify']
+INFO:     Uvicorn running on http://0.0.0.0:5000 (Press CTRL+C to quit)
+INFO:     Started reloader process [88929] using StatReload
+INFO:     Started server process [88932]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
 
-In this chapter, we implement a Shopify OAuth flow in your FastAPI application to authenticate with Shopify and fetch raw data for a GPT Messenger sales bot. The flow retrieves shop details, products, discount codes, and collections in a single, optimized GraphQL Admin API call. Preprocessing is deferred to Chapter 5. This chapter mirrors the structure from Chapter 2 (Facebook OAuth), explaining each step, its purpose, and alignment with professional Python development practices.
+Screenshot Reference: Terminal showing the Uvicorn logs above.
+Why?
 
----
+Running python app.py starts the FastAPI server using Uvicorn, as configured in app.py (Chapter 1).
+The logs confirm the server is listening on http://0.0.0.0:5000 with auto-reload enabled for development.
+If using GitHub Codespaces, the server is accessible via a public URL (e.g., https://stunning-journey-7qr6jxj5j7frg67-5000.app.github.dev).
 
-## Step 1: Why Shopify OAuth?
 
-The sales bot promotes products, shares discounts, and links Messenger preview cards. OAuth securely authenticates access to Shopify data:
+Step 2: Test the Root Endpoint
+Action: Open a browser and navigate to the root URL of your application:
 
-* **Shop Details**: Name and primary domain (for URL generation).
-* **Products**: Variants, inventory, metafields.
-* **Discounts**: Title, codes, values, start/end dates.
-* **Collections**: Titles and grouped products.
+Local: http://localhost:5000
+GitHub Codespaces: Your public URL, e.g., https://stunning-journey-7qr6jxj5j7frg67-5000.app.github.dev
 
-Raw GraphQL data preserves flexibility for tailored preprocessing in Chapter 5.
+Expected Output: The browser should display:
+{"status":"ok"}
 
----
+Screenshot Reference: Browser window showing the JSON response {"status":"ok"}.
+Why?
 
-## Step 2: Project Structure
+The root endpoint (@app.get("/") in app.py) returns a simple JSON response to confirm the FastAPI server is running correctly.
+This verifies that the server is accessible and responding as expected before testing the OAuth flow.
+In GitHub Codespaces, the public URL ensures external access, critical for OAuth redirects.
 
-```txt
-.
-├── facebook_oauth/
-├── shopify_oauth/
-│   ├── __init__.py
-│   ├── routes.py
-│   └── utils.py
-├── shared/
-│   └── utils.py          # <- Stateless CSRF helpers
-├── .env.example
-├── app.py
-├── requirements.txt
-```
 
-* `shopify_oauth/`: Contains Shopify OAuth routes and GraphQL utilities.
-* `shared/utils.py`: Reused CSRF-safe `state` token helpers.
-* `app.py`: Registers both Facebook and Shopify OAuth routes.
+Step 3: Initiate Facebook OAuth
+Action: Navigate to the Facebook OAuth login endpoint:
 
----
+Local: http://localhost:5000/facebook/login
+GitHub Codespaces: https://stunning-journey-7qr6jxj5j7frg67-5000.app.github.dev/facebook/login
 
-## Step 3: Update `app.py`
+Expected Output: The browser redirects to a Facebook OAuth dialog URL, e.g.:
+https://m.facebook.com/v19.0/dialog/oauth?encrypted_query_string=...
 
-```python
-from fastapi import FastAPI
-from facebook_oauth.routes import router as facebook_oauth_router
-from shopify_oauth.routes import router as shopify_oauth_router
-from starlette.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
+The Facebook page displays a prompt like:
+Facebook
+Reconnect Shan Garcia to messenger-gpt-shopify?
+This will re-establish your previous settings for this connection.
+Edit previous settings.
+By continuing, messenger-gpt-shopify will receive ongoing access to the information you share and Meta will record when messenger-gpt-shopify accesses it. Learn more about this sharing and the settings you have.
 
-load_dotenv()
+Screenshot Reference: Facebook OAuth dialog with the reconnect prompt for messenger-gpt-shopify.
+Why?
 
-app = FastAPI(title="Facebook and Shopify OAuth with FastAPI")
+The /facebook/login endpoint (Chapter 1, facebook_oauth/routes.py) constructs the OAuth URL with client_id, redirect_uri, scope (pages_messaging,pages_show_list), and a CSRF state token.
+The redirect to Facebook’s OAuth dialog confirms that the app is correctly initiating authentication.
+The prompt indicates the app (messenger-gpt-shopify, from Chapter 2) is requesting permissions, and “Reconnect” suggests prior authorization (normal for testing).
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
-app.include_router(facebook_oauth_router, prefix="/facebook")
-app.include_router(shopify_oauth_router, prefix="/shopify")
+Step 4: Authorize the App
+Action: Click Reconnect (or “Continue”) on the Facebook OAuth dialog to authorize the app.
+Expected Output: The browser briefly shows a temporary forwarding URL, then redirects to the callback endpoint:
 
-@app.get("/")
-async def root():
-    return {
-        "status": "ok",
-        "message": "Use /facebook/login or /shopify/{shop_name}/login"
-    }
-```
+Local: http://localhost:5000/facebook/callback?code=...&state=...
+GitHub Codespaces: https://stunning-journey-7qr6jxj5j7frg67-5000.app.github.dev/facebook/callback?code=AQDqeAxEI53Puc9Sv31VbkK2JwbJRKDp9vDNG99cC9mSLVDot4ahBkGVMmRYwFhQ42VzO9kYlnrHbbOiz_o_odW6wOEY-rSoDObi0QJMu4NGJeBRDIIFdfvHEGXlbsRZ-eGWHu5hQt2h1xGpgMiwFNp4jCp7I_zsargoTNW3RBC2ueKPw694UOAUenRP7jszrjQgMID_2fhuZKi7uyh3M2pykWYS7i3K71nkAmU4kFawAOzvI3_jZtpoJA9DiaeXqtOQpzOIMG4w5-HNd-bMnvz_br10_Gon08Xh7vDiFr3Ug1owSiwphEZ-_wuEGZ2D694vvBBwWv2GzNa5IWl-79zzJME7slwQ0Hw9ob8dm1f33h-CsZnbUf4F3Kjma2qI8ZI&state=1751277990%3AMhg1D2nYmAE%3Axo_PXjcazb2NsA07TvOPB5kioTgIDLZypAV3MZjyKiE%3D#_=_
 
----
-
-## Step 4: `shopify_oauth/routes.py`
-
-```python
-import os
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data
-from shared.utils import generate_state_token, validate_state_token
-
-router = APIRouter()
-
-@router.get("/{shop_name}/login")
-async def start_oauth(shop_name: str):
-    client_id = os.getenv("SHOPIFY_API_KEY")
-    redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
-    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products"
-
-    if not client_id or not redirect_uri:
-        raise HTTPException(status_code=500, detail="Shopify config missing")
-
-    if not shop_name.endswith(".myshopify.com"):
-        shop_name = f"{shop_name}.myshopify.com"
-
-    state = generate_state_token()
-    auth_url = (
-        f"https://{shop_name}/admin/oauth/authorize?"
-        f"client_id={client_id}&scope={scope}&redirect_uri={redirect_uri}&state={state}"
-    )
-    return RedirectResponse(auth_url)
-
-@router.get("/callback")
-async def oauth_callback(request: Request):
-    code = request.query_params.get("code")
-    shop = request.query_params.get("shop")
-    state = request.query_params.get("state")
-
-    if not code or not shop or not state:
-        raise HTTPException(status_code=400, detail="Missing code/shop/state")
-
-    validate_state_token(state)
-    token_data = await exchange_code_for_token(code, shop)
-    if "access_token" not in token_data:
-        raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
-
-    shopify_data = await get_shopify_data(token_data["access_token"], shop)
-    return JSONResponse(content={
-        "token_data": token_data,
-        "shopify_data": shopify_data.get("data", {})
-    })
-```
-
----
-
-## Step 5: `shopify_oauth/utils.py`
-
-```python
-import os
-import httpx
-from fastapi import HTTPException
-import asyncio
-
-async def exchange_code_for_token(code: str, shop: str):
-    url = f"https://{shop}/admin/oauth/access_token"
-    data = {
-        "client_id": os.getenv("SHOPIFY_API_KEY"),
-        "client_secret": os.getenv("SHOPIFY_API_SECRET"),
-        "code": code
-    }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=data)
-        response.raise_for_status()
-        return response.json()
-
-async def get_shopify_data(access_token: str, shop: str, retries=3):
-    url = f"https://{shop}/admin/api/2025-04/graphql.json"
-    headers = {
-        "X-Shopify-Access-Token": access_token,
-        "Content-Type": "application/json"
-    }
-
-    query = """
-    query SalesBotQuery {
-      shop { name primaryDomain { url } }
-      products(first: 50, sortKey: RELEVANCE) {
-        edges {
-          node {
-            title
-            description
-            handle
-            productType
-            vendor
-            tags
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  title
-                  price
-                  availableForSale
-                  inventoryItem {
-                    inventoryLevels(first: 5) {
-                      edges {
-                        node {
-                          quantities(names: ["available"]) { name quantity }
-                          location { name }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-            metafields(first: 10, namespace: "custom") {
-              edges { node { key value } }
-            }
+The browser displays a JSON response like:
+{
+  "token_data": {
+    "access_token": "EAA6DtFWoZBscBO4RuMgD36ZCL2orzwZCAAkzhKY7l5ZAYJkNEsLJEB81fjq1oP73M1F4mtQ9ZC9iWlZBEWKFKQcEJ05kwtrumMPzE4NQvw6Rv6u905it7lZBSgfwZC3MdWqaCANIhe4UoHth9pUQZAEDcZAV5ZAkQcsp3o2MDGX5HRAt9rnNMmp4Cn0noo7CSwjLUE0G2eV3hxxZCRmmH9nEf4oZAyW98RzwGWWrOWsuBJYtBtp8GT93xDCMcWajR",
+    "token_type": "bearer"
+  },
+  "pages": {
+    "data": [
+      {
+        "access_token": "EAA6DtFWoZBscBO9NqGBTTDTSNcvBo4S9UmPLPuXNJAnBaZBsUUZBDyK7jZAvSH1WdLWfltta9nlAGK6Y3ZCgvSnnd44Jc3AWTXG0UTEsBg38YFnFZCETG80btSZA2rGFBV2TdW1kRnYRv81W6kZA9hoYw3dTPYCZCg0mTIKRL3xdD6s6b4e5uPXm5M5NMRAd4xeYFVPMZD",
+        "category": "Footwear store",
+        "category_list": [
+          {
+            "id": "109512302457693",
+            "name": "Footwear store"
           }
-        }
-        pageInfo { hasNextPage endCursor }
+        ],
+        "name": "Fast Online Store PH",
+        "id": "101368371725791",
+        "tasks": [
+          "MODERATE",
+          "MESSAGING",
+          "ANALYZE",
+          "ADVERTISE",
+          "CREATE_CONTENT",
+          "MANAGE"
+        ]
       }
-      codeDiscountNodes(first: 10, sortKey: TITLE) {
-        edges {
-          node {
-            codeDiscount {
-              ... on DiscountCodeBasic {
-                title
-                codes(first: 5) { edges { node { code } } }
-                customerGets {
-                  value {
-                    ... on DiscountAmount { amount { amount currencyCode } }
-                    ... on DiscountPercentage { percentage }
-                  }
-                }
-                startsAt
-                endsAt
-              }
-            }
-          }
-        }
-        pageInfo { hasNextPage endCursor }
-      }
-      collections(first: 10, sortKey: TITLE) {
-        edges {
-          node {
-            title
-            handle
-            products(first: 5) {
-              edges { node { title } }
-            }
-          }
-        }
-        pageInfo { hasNextPage endCursor }
+    ],
+    "paging": {
+      "cursors": {
+        "before": "QVFIUnp5enFBc21kckE2d1pud2g3Mjd1bEFSOUs4ZAEdSSEpIdHZAoSjVPdlgzVHN6aTZAReEpyOWdHMEF3MmJoRmpXNWI3dlFpa3BWLWoza2hMMDd4TzhMSUF3",
+        "after": "QVFIUnp5enFBc21kckE2d1pud2g3Mjd1bEFSOUs4ZAEdSSEpIdHZAoSjVPdlgzVHN6aTZAReEpyOWdHMEF3MmJoRmpXNWI3dlFpa3BWLWoza2hMMDd4TzhMSUF3"
       }
     }
-    """
+  }
+}
 
-    for attempt in range(retries):
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, headers=headers, json={"query": query})
-                response.raise_for_status()
-                data = response.json()
-                if "errors" in data:
-                    raise HTTPException(status_code=400, detail=f"GraphQL error: {data['errors']}")
-                return data
-        except httpx.HTTPStatusError as e:
-            if attempt == retries - 1 or e.response.status_code != 429:
-                raise
-            await asyncio.sleep(2 ** attempt)
-```
+Screenshot Reference: Browser showing the JSON response with token_data and pages.
+Why?
 
----
+Clicking “Reconnect” authorizes the app (messenger-gpt-shopify) to access the requested scopes.
+Facebook redirects to the callback URL with a code and state parameter, which the FastAPI app validates and exchanges for an access token (Chapter 1, facebook_oauth/utils.py).
+The JSON response confirms successful token exchange (access_token, token_type) and retrieval of page data (pages.data), including a page access token and details (e.g., “Fast Online Store PH”).
+The presence of MESSAGING in tasks verifies the app can send Messenger messages, critical for the sales bot.
 
-## Step 6: `.env.example`
 
-```env
-# Shopify OAuth credentials
-SHOPIFY_API_KEY=your_shopify_api_key
-SHOPIFY_API_SECRET=your_shopify_api_secret
+Step 5: Verify the Integration
+Action: Review the JSON response to ensure:
 
-# Shopify redirect URI for local dev
-SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
+token_data.access_token is present and valid.
+pages.data includes at least one page with a valid access_token and MESSAGING in tasks.
+No errors (e.g., HTTP 400 for invalid state or code) appear in the browser or server logs.
 
-# Or for GitHub Codespaces
-# SHOPIFY_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/shopify/callback
-```
+Expected Outcome:
 
----
+The response matches the example above, indicating the OAuth flow is working.
+Server logs show no errors, only successful HTTP 200 responses for /facebook/callback.
 
-## Step 7: `requirements.txt`
+Screenshot Reference: Terminal logs showing successful request handling.
+Why?
 
-```txt
-fastapi
-uvicorn
-httpx
-python-dotenv
-```
+The access tokens enable the app to interact with Facebook’s Messenger API for the sales bot.
+The page data confirms the app has access to the required resources (e.g., a business page like “Fast Online Store PH”).
+Verifying MESSAGING ensures the bot can send messages, aligning with the project’s goals.
 
----
 
-✅ Let me know when you're ready and I’ll send the **corrected Chapter 4** next, with this implementation in mind.
+Troubleshooting Common Issues
+
+“Missing code parameter”: Ensure the redirect URL in .env (FACEBOOK_REDIRECT_URI) matches the “Valid OAuth Redirect URIs” in the Facebook app settings (Chapter 2).
+“Invalid state token”: Verify STATE_TOKEN_SECRET is set in .env and consistent across requests.
+No pages in response: Check that the Facebook user has admin access to a business page and the app is in Development Mode or Live Mode with approved permissions.
+404 or 500 errors: Confirm the server is running (http://0.0.0.0:5000) and the public URL is accessible in GitHub Codespaces.
+
+Why?
+
+These checks ensure the OAuth flow is robust and handles edge cases, maintaining security and functionality.
+
+
+Summary: Why This Testing Matters
+
+Server Verification: Running python app.py and checking the root endpoint confirms the FastAPI server is operational.
+OAuth Flow: Navigating to /facebook/login and completing the OAuth process tests the integration with Facebook’s API.
+Callback Success: The /facebook/callback response with token_data and pages verifies that credentials (Chapter 2) and OAuth logic (Chapter 1) are correctly implemented.
+Bot Readiness: Access tokens and page data prepare the app for Messenger interactions in the GPT sales bot.
+
+With the Facebook OAuth flow working, you’re ready to set up the Shopify OAuth integration (subsequent chapters) to fetch product data for the bot.

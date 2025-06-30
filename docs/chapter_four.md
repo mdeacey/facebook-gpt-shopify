@@ -1,151 +1,278 @@
-Here’s the updated **Chapter 4** focused entirely on **creating the Shopify development store and app for API integration**, as you specified — separate from the code in Chapter 3 and detailed with step-by-step instructions and reasoning.
+Absolutely — here is the **fully updated Chapter 3**, matching your structure, keeping code and implementation focused, and correcting the `.env` keys for consistency with your actual OAuth variables (`SHOPIFY_API_KEY`, not `CLIENT_ID`, etc.).
 
 ---
 
-# Chapter 4: Creating a Shopify Development Store and App for API Integration
+# Chapter 3: Implementing Shopify OAuth with FastAPI for a Sales Bot
 
-This chapter walks you through creating a Shopify development store and setting up a new app within the Shopify Partners dashboard. These steps are essential for obtaining the credentials (API Key and Secret Key) needed for your FastAPI integration with Shopify’s API. We include screenshots references and explain the reasoning behind each action.
-
----
-
-## Step 1: Access the Shopify Partners Dashboard and Navigate to Stores
-
-**Action:** Log into the Shopify Partners dashboard at [partners.shopify.com](https://partners.shopify.com). In the left sidebar, locate and click on **"Stores"**.
-
-**Screenshot Reference:** Shows the Partners dashboard with the "Stores" section selected, no stores listed.
-
-**Why?**
-
-* The "Stores" section manages all your Shopify development stores.
-* Since this is your first store, you will see "No stores found" and need to create a new development store.
+In this chapter, we implement a Shopify OAuth flow in your FastAPI application to authenticate with Shopify and fetch raw data for a GPT Messenger sales bot. The flow retrieves shop details, products, discount codes, and collections in a single, optimized GraphQL Admin API call. Preprocessing is deferred to Chapter 5. This chapter mirrors the structure from Chapter 2 (Facebook OAuth), explaining each step, its purpose, and alignment with professional Python development practices.
 
 ---
 
-## Step 2: Create a New Development Store
+## Step 1: Why Shopify OAuth?
 
-**Action:** On the "Stores" page, click the green **"Add store"** button in the top-right, then select **"Create development store"** from the dropdown.
+The sales bot promotes products, shares discounts, and links Messenger preview cards. OAuth securely authenticates access to Shopify data:
 
-**Screenshot Reference:** Highlights the "Add store" button and "Create development store" option.
+* **Shop Details**: Name and primary domain (for URL generation).
+* **Products**: Variants, inventory, metafields.
+* **Discounts**: Title, codes, values, start/end dates.
+* **Collections**: Titles and grouped products.
 
-**Why?**
-
-* Development stores provide sandbox environments for testing apps and themes without affecting live stores.
-* They are non-transferable and ideal for testing your FastAPI app integration safely.
-
----
-
-## Step 3: Configure the Development Store Details
-
-**Action:** Fill out the "Create a store for a client" form:
-
-* **Store name:** Enter a unique name like `acme-7cu19ngr`.
-* **Build version:** Select **"Current release"** to use the latest Shopify version.
-* **Data and configurations:** Choose **"Start with test data"** to pre-populate with sample products and customers.
-
-Click the green **"Create development store"** button to proceed.
-
-**Screenshot Reference:** Shows the filled form with store name, build version, and data options.
-
-**Why?**
-
-* Unique store name creates the store’s URL (`acme-7cu19ngr.myshopify.com`).
-* Using the current release ensures you test with the latest API versions.
-* Test data saves time by providing sample content to experiment with your app.
+Raw GraphQL data preserves flexibility for tailored preprocessing in Chapter 5.
 
 ---
 
-## Step 4: Navigate to Apps and Create a New App
+## Step 2: Project Structure
 
-**Action:** Back in the Shopify Partners dashboard, click **"Apps"** in the left sidebar, then select **"All apps"**. Click the green **"Create app"** button.
+```txt
+.
+├── facebook_oauth/
+├── shopify_oauth/
+│   ├── __init__.py
+│   ├── routes.py
+│   └── utils.py
+├── shared/
+│   └── utils.py          # <- Stateless CSRF helpers
+├── .env.example
+├── app.py
+├── requirements.txt
+```
 
-**Screenshot Reference:** Shows the "Apps" page with the "Create app" button highlighted.
-
-**Why?**
-
-* The Apps section manages apps that connect to Shopify APIs.
-* Creating a new app generates the credentials (API Key, Secret Key) your FastAPI app needs.
-
----
-
-## Step 5: Create the App Manually
-
-**Action:** On the "Create a new app" page, click **"Create app manually"**.
-
-**Screenshot Reference:** Shows the "Create app manually" button.
-
-**Why?**
-
-* Manual creation gives you full control over app configuration.
-* It’s suitable for custom FastAPI integrations requiring tailored setup.
+* `shopify_oauth/`: Contains Shopify OAuth routes and GraphQL utilities.
+* `shared/utils.py`: Reused CSRF-safe `state` token helpers.
+* `app.py`: Registers both Facebook and Shopify OAuth routes.
 
 ---
 
-## Step 6: Configure the App Details and URLs
+## Step 3: Update `app.py`
 
-**Action:** Name your app `messenger-gpt`. Go to the **Configuration** tab and fill in:
+```python
+from fastapi import FastAPI
+from facebook_oauth.routes import router as facebook_oauth_router
+from shopify_oauth.routes import router as shopify_oauth_router
+from starlette.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 
-* **App URL:** `https://your-fastapi-app-url` (e.g., `https://upgraded-space-potato-9vqxrgx5wc59q7-5000.app.github.dev`)
-* **Allowed redirection URL(s):** `https://your-fastapi-app-url/shopify/callback`
+load_dotenv()
 
-Click **"Save and release"**.
+app = FastAPI(title="Facebook and Shopify OAuth with FastAPI")
 
-**Screenshot Reference:** Shows app configuration with name and URLs.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-**Why?**
+app.include_router(facebook_oauth_router, prefix="/facebook")
+app.include_router(shopify_oauth_router, prefix="/shopify")
 
-* App URL is the base URL your FastAPI app listens on.
-* Allowed redirection URLs are critical for OAuth to securely redirect users after authentication.
-* Saving applies your configuration.
-
----
-
-## Step 7: Configure Additional App Settings
-
-**Action:** In the Configuration tab:
-
-* Set **Embed in Shopify admin** to **False**.
-* Set **Event version** to **2025-04 (Latest)**.
-* Leave **Compliance webhooks** (customer/shop data erasure) blank for now.
-
-Click **"Save and release"** again.
-
-**Screenshot Reference:** Shows embed setting, event version, and compliance webhook options.
-
-**Why?**
-
-* Not embedding keeps the app standalone (not inside Shopify admin UI).
-* Using the latest event version ensures webhook compatibility.
-* Compliance webhooks can be added later before public release.
+@app.get("/")
+async def root():
+    return {
+        "status": "ok",
+        "message": "Use /facebook/login or /shopify/{shop_name}/login"
+    }
+```
 
 ---
 
-## Step 8: Retrieve App Credentials and Test the App
+## Step 4: `shopify_oauth/routes.py`
 
-**Action:** Go to the **Overview** tab of your app. Copy the **API Key** and **API Secret Key** into your `.env` file as `SHOPIFY_API_KEY` and `SHOPIFY_API_SECRET`, respectively. Also set `SHOPIFY_REDIRECT_URI` to your callback URL.
+```python
+import os
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import RedirectResponse, JSONResponse
+from .utils import exchange_code_for_token, get_shopify_data
+from shared.utils import generate_state_token, validate_state_token
 
-In the **Test your app** section, click **Select store**, choose your development store (`acme-7cu19ngr`), and install the app.
+router = APIRouter()
 
-**Screenshot Reference:** Shows Overview tab with API credentials and installation history.
+@router.get("/{shop_name}/login")
+async def start_oauth(shop_name: str):
+    client_id = os.getenv("SHOPIFY_API_KEY")
+    redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
+    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products"
 
-**Why?**
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Shopify config missing")
 
-* Credentials authenticate your FastAPI app with Shopify’s OAuth system.
-* Testing app installation on your dev store verifies the OAuth flow and API access work correctly.
+    if not shop_name.endswith(".myshopify.com"):
+        shop_name = f"{shop_name}.myshopify.com"
+
+    state = generate_state_token()
+    auth_url = (
+        f"https://{shop_name}/admin/oauth/authorize?"
+        f"client_id={client_id}&scope={scope}&redirect_uri={redirect_uri}&state={state}"
+    )
+    return RedirectResponse(auth_url)
+
+@router.get("/callback")
+async def oauth_callback(request: Request):
+    code = request.query_params.get("code")
+    shop = request.query_params.get("shop")
+    state = request.query_params.get("state")
+
+    if not code or not shop or not state:
+        raise HTTPException(status_code=400, detail="Missing code/shop/state")
+
+    validate_state_token(state)
+    token_data = await exchange_code_for_token(code, shop)
+    if "access_token" not in token_data:
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
+
+    shopify_data = await get_shopify_data(token_data["access_token"], shop)
+    return JSONResponse(content={
+        "token_data": token_data,
+        "shopify_data": shopify_data.get("data", {})
+    })
+```
 
 ---
 
-## Summary: Why These Steps Matter
+## Step 5: `shopify_oauth/utils.py`
 
-* **Safe Testing Environment:** Development stores isolate your tests from live data.
-* **App Credentials:** Generate API keys required for OAuth and API access.
-* **OAuth Redirects:** Proper URLs ensure secure authentication flows.
-* **Testing Readiness:** Installing the app on a dev store verifies integration before production.
-* **Future Compliance:** Event versions and webhook settings prepare your app for eventual public release.
+```python
+import os
+import httpx
+from fastapi import HTTPException
+import asyncio
+
+async def exchange_code_for_token(code: str, shop: str):
+    url = f"https://{shop}/admin/oauth/access_token"
+    data = {
+        "client_id": os.getenv("SHOPIFY_API_KEY"),
+        "client_secret": os.getenv("SHOPIFY_API_SECRET"),
+        "code": code
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=data)
+        response.raise_for_status()
+        return response.json()
+
+async def get_shopify_data(access_token: str, shop: str, retries=3):
+    url = f"https://{shop}/admin/api/2025-04/graphql.json"
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
+
+    query = """
+    query SalesBotQuery {
+      shop { name primaryDomain { url } }
+      products(first: 50, sortKey: RELEVANCE) {
+        edges {
+          node {
+            title
+            description
+            handle
+            productType
+            vendor
+            tags
+            status
+            variants(first: 10) {
+              edges {
+                node {
+                  title
+                  price
+                  availableForSale
+                  inventoryItem {
+                    inventoryLevels(first: 5) {
+                      edges {
+                        node {
+                          quantities(names: ["available"]) { name quantity }
+                          location { name }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            metafields(first: 10, namespace: "custom") {
+              edges { node { key value } }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+      codeDiscountNodes(first: 10, sortKey: TITLE) {
+        edges {
+          node {
+            codeDiscount {
+              ... on DiscountCodeBasic {
+                title
+                codes(first: 5) { edges { node { code } } }
+                customerGets {
+                  value {
+                    ... on DiscountAmount { amount { amount currencyCode } }
+                    ... on DiscountPercentage { percentage }
+                  }
+                }
+                startsAt
+                endsAt
+              }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+      collections(first: 10, sortKey: TITLE) {
+        edges {
+          node {
+            title
+            handle
+            products(first: 5) {
+              edges { node { title } }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+    """
+
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=headers, json={"query": query})
+                response.raise_for_status()
+                data = response.json()
+                if "errors" in data:
+                    raise HTTPException(status_code=400, detail=f"GraphQL error: {data['errors']}")
+                return data
+        except httpx.HTTPStatusError as e:
+            if attempt == retries - 1 or e.response.status_code != 429:
+                raise
+            await asyncio.sleep(2 ** attempt)
+```
 
 ---
 
-With your Shopify development store and app ready, you’re set to integrate these credentials into your FastAPI project and test the Shopify OAuth flow as implemented in Chapter 3.
+## Step 6: `.env.example`
+
+```env
+# Shopify OAuth credentials
+SHOPIFY_API_KEY=your_shopify_api_key
+SHOPIFY_API_SECRET=your_shopify_api_secret
+
+# Shopify redirect URI for local dev
+SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
+
+# Or for GitHub Codespaces
+# SHOPIFY_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/shopify/callback
+```
 
 ---
 
-If you want, I can also help you prepare a `.env.example` snippet reflecting these credentials or any other follow-up docs!
+## Step 7: `requirements.txt`
+
+```txt
+fastapi
+uvicorn
+httpx
+python-dotenv
+```
+
+---
+
+✅ Let me know when you're ready and I’ll send the **corrected Chapter 4** next, with this implementation in mind.
