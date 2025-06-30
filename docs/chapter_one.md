@@ -1,4 +1,4 @@
-# Facebook OAuth with FastAPI — Secure, Scalable & Modular
+# Chapter 1: Facebook OAuth with FastAPI — Secure, Scalable & Modular
 
 This tutorial walks you through building a **secure, modular, and scalable** Facebook OAuth integration with FastAPI. It uses best practices like async programming, environment variables, and **stateless CSRF protection** via signed `state` tokens.
 
@@ -204,6 +204,9 @@ def validate_state_token(state_token: str, max_age: int = 300):
 FACEBOOK_APP_ID=your_app_id
 FACEBOOK_APP_SECRET=your_app_secret
 FACEBOOK_REDIRECT_URI=http://localhost:5000/facebook/callback
+
+# If you're using GitHub Codespaces, replace with something like:
+# FACEBOOK_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/facebook/callback
 
 # Shared secret for state token CSRF protection
 STATE_TOKEN_SECRET=replace_with_secure_token

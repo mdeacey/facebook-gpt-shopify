@@ -1,10 +1,14 @@
-### Chapter 3: Implementing Shopify OAuth with FastAPI for a Sales Bot
+Absolutely — here is the **fully updated Chapter 3**, matching your structure, keeping code and implementation focused, and correcting the `.env` keys for consistency with your actual OAuth variables (`SHOPIFY_API_KEY`, not `CLIENT_ID`, etc.).
+
+---
+
+# Chapter 3: Implementing Shopify OAuth with FastAPI for a Sales Bot
 
 In this chapter, we implement a Shopify OAuth flow in your FastAPI application to authenticate with Shopify and fetch raw data for a GPT Messenger sales bot. The flow retrieves shop details, products, discount codes, and collections in a single, optimized GraphQL Admin API call. Preprocessing is deferred to Chapter 5. This chapter mirrors the structure from Chapter 2 (Facebook OAuth), explaining each step, its purpose, and alignment with professional Python development practices.
 
 ---
 
-#### Step 1: Why Shopify OAuth?
+## Step 1: Why Shopify OAuth?
 
 The sales bot promotes products, shares discounts, and links Messenger preview cards. OAuth securely authenticates access to Shopify data:
 
@@ -17,9 +21,9 @@ Raw GraphQL data preserves flexibility for tailored preprocessing in Chapter 5.
 
 ---
 
-#### Step 2: Project Structure
+## Step 2: Project Structure
 
-```bash
+```txt
 .
 ├── facebook_oauth/
 ├── shopify_oauth/
@@ -27,20 +31,19 @@ Raw GraphQL data preserves flexibility for tailored preprocessing in Chapter 5.
 │   ├── routes.py
 │   └── utils.py
 ├── shared/
-│   └── utils.py
+│   └── utils.py          # <- Stateless CSRF helpers
 ├── .env.example
 ├── app.py
 ├── requirements.txt
 ```
 
-* `facebook_oauth/`: Facebook login (unchanged).
-* `shopify_oauth/`: Shopify login and GraphQL data retrieval.
-* `shared/utils.py`: Shared `state` token helpers.
-* `app.py`: Main FastAPI instance.
+* `shopify_oauth/`: Contains Shopify OAuth routes and GraphQL utilities.
+* `shared/utils.py`: Reused CSRF-safe `state` token helpers.
+* `app.py`: Registers both Facebook and Shopify OAuth routes.
 
 ---
 
-#### Step 3: Update app.py
+## Step 3: Update `app.py`
 
 ```python
 from fastapi import FastAPI
@@ -65,14 +68,15 @@ app.include_router(shopify_oauth_router, prefix="/shopify")
 
 @app.get("/")
 async def root():
-    return {\        "status": "ok",
+    return {
+        "status": "ok",
         "message": "Use /facebook/login or /shopify/{shop_name}/login"
     }
 ```
 
 ---
 
-#### Step 4: shopify\_oauth/routes.py
+## Step 4: `shopify_oauth/routes.py`
 
 ```python
 import os
@@ -125,7 +129,7 @@ async def oauth_callback(request: Request):
 
 ---
 
-#### Step 5: shopify\_oauth/utils.py
+## Step 5: `shopify_oauth/utils.py`
 
 ```python
 import os
@@ -175,7 +179,7 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
                     inventoryLevels(first: 5) {
                       edges {
                         node {
-                          quantities(names: [\"available\"]) { name quantity }
+                          quantities(names: ["available"]) { name quantity }
                           location { name }
                         }
                       }
@@ -184,10 +188,8 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
                 }
               }
             }
-            metafields(first: 10, namespace: \"custom\") {
-              edges {
-                node { key value }
-              }
+            metafields(first: 10, namespace: "custom") {
+              edges { node { key value } }
             }
           }
         }
@@ -246,22 +248,31 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
 
 ---
 
-#### Step 6: .env.example
+## Step 6: `.env.example`
 
 ```env
 # Shopify OAuth credentials
 SHOPIFY_API_KEY=your_shopify_api_key
 SHOPIFY_API_SECRET=your_shopify_api_secret
+
+# Shopify redirect URI for local dev
 SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
+
+# Or for GitHub Codespaces
+# SHOPIFY_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/shopify/callback
 ```
 
 ---
 
-#### Step 7: requirements.txt
+## Step 7: `requirements.txt`
 
-```
+```txt
 fastapi
 uvicorn
-python-dotenv
 httpx
+python-dotenv
 ```
+
+---
+
+✅ Let me know when you're ready and I’ll send the **corrected Chapter 4** next, with this implementation in mind.
