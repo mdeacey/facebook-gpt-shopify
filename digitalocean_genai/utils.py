@@ -7,7 +7,7 @@ import httpx
 import hmac
 import hashlib
 import base64
-from fastapi import HTTPException, Request, Depends
+from fastapi import HTTPException, Request
 
 async def verify_shopify_webhook(request: Request) -> bool:
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
