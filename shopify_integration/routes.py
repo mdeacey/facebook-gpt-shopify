@@ -2,7 +2,7 @@ import os
 import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks
+from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, daily_poll
 from shared.utils import generate_state_token, validate_state_token
 import hmac
 import hashlib
@@ -69,13 +69,17 @@ async def oauth_callback(request: Request):
             },
             data=json.dumps(test_payload)
         )
-        test_result = response.json() if response.status_code == 200 else {"error": response.text}
-        print(f"Webhook test result for {shop}: {test_result}")
+        webhook_test_result = response.json() if response.status_code == 200 else {"error": response.text}
+        print(f"Webhook test result for {shop}: {webhook_test_result}")
+
+    poll_test_result = await daily_poll()
+    print(f"Polling test result for {shop}: {poll_test_result}")
 
     return JSONResponse(content={
         "token_data": token_data,
         "shopify_data": shopify_data,
-        "webhook_test": test_result
+        "webhook_test": webhook_test_result,
+        "polling_test": poll_test_result
     })
 
 @router.post("/webhook")

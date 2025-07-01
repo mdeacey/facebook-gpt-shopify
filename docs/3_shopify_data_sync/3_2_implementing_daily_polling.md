@@ -1,28 +1,30 @@
-Below is the complete Subchapter 3.2, which focuses on implementing daily polling as a backup to the primary webhook system in your FastAPI application. This subchapter ensures your sales bot’s data stays synchronized with Shopify even if webhooks fail, without including any DigitalOcean-specific code (as requested). Since we’re updating `app.py` and `shopify_integration/utils.py`, I’ve included the full updated files to avoid confusion, based on the provided starting directory structure and files.
+You’re absolutely right—since the tests for both webhooks and polling are now integrated into the OAuth flow and executed in a production-like context, we can consolidate them into a single Subchapter 1.3: Tests. This simplifies the structure, aligning with your goal of a seamless, flow-based testing approach. Let’s update the subchapters accordingly.
+
+First, here’s the updated Subchapter 1.2: Setting Up Shopify Polling for Data Consistency, which focuses solely on setting up the polling system without testing logic (that will move to 1.3).
 
 ---
 
-### Subchapter 3.2: Implementing Daily Polling for Data Consistency
+### Updated Subchapter 1.2: Setting Up Shopify Polling for Data Consistency
 
-#### Introduction
-While webhooks provide real-time updates from Shopify, it’s prudent to have a backup mechanism to ensure your sales bot’s data remains consistent, even if webhooks fail (e.g., due to network issues or missed events). In this subchapter, we’ll implement a daily polling system that runs once a day to fetch and sync data for all authenticated Shopify shops. This polling acts as a secondary check to guarantee data accuracy, complementing the webhook system set up in Subchapter 3.1.
 
-#### Prerequisites
-- Completed Subchapter 3.1: Setting Up Shopify Webhooks.
-- APScheduler installed (`pip install apscheduler`).
-- Shopify access tokens stored in environment variables (e.g., `SHOPIFY_ACCESS_TOKEN_yourshop_myshopify_com`).
+
+# Subchapter 1.2: Setting Up Shopify Polling for Data Consistency
+
+## Introduction
+While webhooks provide real-time Shopify updates, a daily polling mechanism ensures your sales bot’s data remains consistent as a backup. This subchapter guides you through setting up a polling system in your FastAPI application, scheduling it to run once daily to fetch data for all authenticated shops.
+
+## Prerequisites
+- Completed Subchapter 1.1: Setting Up Shopify Webhooks.
+- Your FastAPI application is running locally or in a production-like environment.
+- Shopify API credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`, `SHOPIFY_WEBHOOK_ADDRESS`) are set.
+- `apscheduler` is installed (`pip install apscheduler`).
 
 ---
 
-#### Step 1: Update `shopify_integration/utils.py` with the Daily Polling Function
-We’ll add an asynchronous `daily_poll()` function to `shopify_integration/utils.py` that:
-1. Retrieves all authenticated Shopify shops from environment variables.
-2. Fetches the latest data for each shop using the Shopify API.
-3. Preprocesses the data (if needed).
-4. Logs the action (for now, as a placeholder).
+## Step 1: Update `shopify_integration/utils.py` with the Daily Polling Function
+Add a `daily_poll()` function to fetch and process data for authenticated shops as a backup sync.
 
-Here’s the updated `shopify_integration/utils.py`:
-
+**Updated File: `shopify_integration/utils.py`**
 ```python
 import os
 import hmac
@@ -146,7 +148,7 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
         except httpx.HTTPStatusError as e:
             if attempt == retries - 1 or e.response.status_code != 429:
                 raise
-            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+            await asyncio.sleep(2 ** attempt)
 
 async def verify_hmac(request: Request) -> bool:
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
@@ -175,9 +177,9 @@ async def register_webhooks(shop: str, access_token: str):
         "collections/update",
         "collections/delete"
     ]
-    webhook_address = os.getenv("WEBHOOK_ADDRESS")
+    webhook_address = os.getenv("SHOPIFY_WEBHOOK_ADDRESS")
     if not webhook_address:
-        raise HTTPException(status_code=500, detail="WEBHOOK_ADDRESS not set")
+        raise HTTPException(status_code=500, detail="SHOPIFY_WEBHOOK_ADDRESS not set")
 
     existing_webhooks = await get_existing_webhooks(shop, access_token)
     for topic in webhook_topics:
@@ -216,9 +218,7 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
 async def daily_poll():
     """
     Polls Shopify once a day for each authenticated shop to ensure data consistency.
-    Runs as a backup to the primary webhook system.
     """
-    # Dynamically get all shops from environment variables
     shops = [
         key.replace("SHOPIFY_ACCESS_TOKEN_", "").replace("_", ".")
         for key in os.environ
@@ -227,37 +227,120 @@ async def daily_poll():
     
     for shop in shops:
         try:
-            # Get the access token for the shop
             access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
             access_token = os.getenv(access_token_key)
             if access_token:
-                # Fetch data from Shopify API
                 shopify_data = await get_shopify_data(access_token, shop)
-                # Preprocess the data (if needed)
-                preprocessed_data = preprocess_shopify_data(shopify_data)
-                # For now, just log the data; later, this can be replaced with storage logic
-                print(f"Polled and processed data for {shop}: {preprocessed_data}")
+                print(f"Polled data for {shop}: {shopify_data}")
         except Exception as e:
             print(f"Polling failed for {shop}: {str(e)}")
-
-def preprocess_shopify_data(shopify_data):
-    # Placeholder preprocessing function; enhance as needed
-    return shopify_data
 ```
 
-**Explanation**:  
-- Added `daily_poll()` to fetch data for all shops dynamically.  
-- Uses existing `get_shopify_data()` and `preprocess_shopify_data()` functions.  
-- Errors are caught per shop to ensure polling continues for others.
+**Key Changes**:
+- Removed the test-related logic from `daily_poll()` since testing is now handled in the OAuth callback (moving to Subchapter 1.3).
+- Kept the core polling functionality intact.
 
 ---
 
-#### Step 2: Schedule the Polling in `app.py`
-We’ll use `apscheduler` to schedule `daily_poll()` to run daily at midnight. Here’s the updated `app.py`:
+#### Step 2: Update `shopify_integration/routes.py` to Include Scheduler
+Schedule the daily polling job in the app.
 
+**Updated File: `shopify_integration/routes.py`**
+```python
+import os
+import json
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import RedirectResponse, JSONResponse
+from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, daily_poll
+from shared.utils import generate_state_token, validate_state_token
+import hmac
+import hashlib
+import base64
+import httpx
+
+router = APIRouter()
+
+@router.get("/{shop_name}/login")
+async def start_oauth(shop_name: str):
+    client_id = os.getenv("SHOPIFY_API_KEY")
+    redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
+    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_products,write_orders,write_inventory"
+
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Shopify app config missing")
+
+    if not shop_name.endswith(".myshopify.com"):
+        shop_name = f"{shop_name}.myshopify.com"
+
+    state = generate_state_token()
+
+    auth_url = (
+        f"https://{shop_name}/admin/oauth/authorize?"
+        f"client_id={client_id}&scope={scope}&redirect_uri={redirect_uri}&response_type=code&state={state}"
+    )
+    return RedirectResponse(auth_url)
+
+@router.get("/callback")
+async def oauth_callback(request: Request):
+    code = request.query_params.get("code")
+    shop = request.query_params.get("shop")
+    state = request.query_params.get("state")
+
+    if not code or not shop or not state:
+        raise HTTPException(status_code=400, detail="Missing code, shop, or state parameter")
+
+    validate_state_token(state)
+
+    token_data = await exchange_code_for_token(code, shop)
+    if "access_token" not in token_data:
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
+
+    os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"] = token_data["access_token"]
+
+    # Register webhooks
+    await register_webhooks(shop, token_data["access_token"])
+
+    # Fetch initial shop data
+    shopify_data = await get_shopify_data(token_data["access_token"], shop)
+
+    return JSONResponse(content={
+        "token_data": token_data,
+        "shopify_data": shopify_data
+    })
+
+@router.post("/webhook")
+async def shopify_webhook(request: Request):
+    if not await verify_hmac(request):
+        raise HTTPException(status_code=401, detail="Invalid HMAC signature")
+
+    shop = request.headers.get("X-Shopify-Shop-Domain")
+    if not shop:
+        raise HTTPException(status_code=400, detail="Missing shop domain")
+
+    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
+    access_token = os.getenv(access_token_key)
+    if not access_token:
+        raise HTTPException(status_code=500, detail="Access token not found")
+
+    payload = await request.json()
+    event_type = request.headers.get("X-Shopify-Topic")
+    print(f"Received {event_type} event from {shop}: {payload}")
+
+    return {"status": "success"}
+```
+
+**Key Changes**:
+- Removed the webhook and polling test logic from the callback, as it will move to Subchapter 1.3.
+- Kept the core OAuth and webhook functionality intact.
+
+---
+
+#### Step 3: Update `app.py` with Polling Scheduler
+Schedule the daily polling job.
+
+**Updated File: `app.py`**
 ```python
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
 from facebook_oauth.routes import router as facebook_oauth_router
 from shopify_integration.routes import router as shopify_oauth_router
 from starlette.middleware.cors import CORSMiddleware
@@ -298,19 +381,16 @@ if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=5000, reload=True)
 ```
 
-**Explanation**:  
-- Added `BackgroundScheduler` to run `daily_poll()` at midnight.  
-- Used `atexit` to ensure clean shutdown.  
-- No changes to existing routes or middleware.
+**Key Changes**: No changes needed; the scheduler remains configured for `daily_poll()`.
 
 ---
 
-#### Step 3: Configure Environment Variables
-Ensure your `.env` file includes Shopify access tokens, stored during the OAuth flow.
+#### Step 4: Configure Environment Variables
+Ensure your `.env` file includes Shopify access tokens.
 
-**Example `.env`**:
+**Updated `.env` Example**:
 ```plaintext
-# Shopify credentials
+# Shopify OAuth credentials
 SHOPIFY_API_KEY=your_shopify_api_key
 SHOPIFY_API_SECRET=your_shopify_api_secret
 SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
@@ -318,11 +398,22 @@ SHOPIFY_WEBHOOK_ADDRESS=https://your-app.com/shopify/webhook
 SHOPIFY_ACCESS_TOKEN_yourshop_myshopify_com=your_access_token
 ```
 
+---
+
 #### Summary
-You’ve added a daily polling mechanism to your FastAPI app, ensuring data consistency as a backup to webhooks. The system fetches and logs data for all authenticated shops once a day, with room to extend functionality later.
+This subchapter sets up a daily polling backup system, scheduled to run at midnight, to ensure data consistency across authenticated shops. Testing will be handled in Subchapter 1.3.
 
 #### Next Steps
-- Configure webhooks via Shopify admin UI (Subchapter 3.3).  
-- Test webhook and polling integration (Subchapter 3.4).
+- Proceed to Subchapter 1.3 for integrated testing of webhooks and polling.
+- No additional test routes or scripts are needed.
+
+
 
 ---
+
+### Explanation
+- **Focused Setup**: Subchapter 1.2 now focuses solely on setting up the polling system, removing test logic to align with the new structure.
+- **No Testing Here**: Testing is deferred to Subchapter 1.3, keeping this subchapter about implementation only.
+- **Full Files**: Included updated files to provide complete context, ensuring users can follow along without confusion.
+
+Next, I’ll wait for your request to update Subchapter 1.3 with the integrated testing for both webhooks and polling. Just say “give me the updated 1_3” when you’re ready!
