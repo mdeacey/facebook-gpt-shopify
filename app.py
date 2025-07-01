@@ -1,13 +1,8 @@
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
 from facebook_oauth.routes import router as facebook_oauth_router
 from shopify_integration.routes import router as shopify_oauth_router
 from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-from shopify_integration.utils import daily_poll
-import atexit
 
 load_dotenv()
 
@@ -26,12 +21,6 @@ app.include_router(shopify_oauth_router, prefix="/shopify")
 @app.get("/")
 async def root():
     return {"status": "ok"}
-
-scheduler = BackgroundScheduler()
-scheduler.add_job(daily_poll, CronTrigger(hour=0, minute=0))
-scheduler.start()
-
-atexit.register(lambda: scheduler.shutdown())
 
 if __name__ == "__main__":
     import uvicorn

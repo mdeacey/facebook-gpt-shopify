@@ -1,8 +1,13 @@
 import os
+import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data, preprocess_shopify_data, verify_hmac, register_webhooks
+from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks
 from shared.utils import generate_state_token, validate_state_token
+import hmac
+import hashlib
+import base64
+import httpx
 
 router = APIRouter()
 
@@ -10,7 +15,7 @@ router = APIRouter()
 async def start_oauth(shop_name: str):
     client_id = os.getenv("SHOPIFY_API_KEY")
     redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
-    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_webhooks"
+    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_products,write_orders,write_inventory"
 
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Shopify app config missing")
@@ -46,11 +51,31 @@ async def oauth_callback(request: Request):
     await register_webhooks(shop, token_data["access_token"])
 
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
-    preprocessed_data = preprocess_shopify_data(shopify_data)
+
+    test_payload = {"product": {"id": 12345, "title": "Test Product"}}
+    secret = os.getenv("SHOPIFY_API_SECRET")
+    hmac_signature = base64.b64encode(
+        hmac.new(secret.encode(), json.dumps(test_payload).encode(), hashlib.sha256).digest()
+    ).decode()
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"http://localhost:5000/shopify/webhook",
+            headers={
+                "X-Shopify-Topic": "products/update",
+                "X-Shopify-Shop-Domain": shop,
+                "X-Shopify-Hmac-Sha256": hmac_signature,
+                "Content-Type": "application/json"
+            },
+            data=json.dumps(test_payload)
+        )
+        test_result = response.json() if response.status_code == 200 else {"error": response.text}
+        print(f"Webhook test result for {shop}: {test_result}")
 
     return JSONResponse(content={
         "token_data": token_data,
-        "preprocessed_data": preprocessed_data,
+        "shopify_data": shopify_data,
+        "webhook_test": test_result
     })
 
 @router.post("/webhook")

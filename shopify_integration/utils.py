@@ -149,9 +149,9 @@ async def register_webhooks(shop: str, access_token: str):
         "collections/update",
         "collections/delete"
     ]
-    webhook_address = os.getenv("WEBHOOK_ADDRESS")
+    webhook_address = os.getenv("SHOPIFY_WEBHOOK_ADDRESS")
     if not webhook_address:
-        raise HTTPException(status_code=500, detail="WEBHOOK_ADDRESS not set")
+        raise HTTPException(status_code=500, detail="SHOPIFY_WEBHOOK_ADDRESS not set")
 
     existing_webhooks = await get_existing_webhooks(shop, access_token)
     for topic in webhook_topics:
@@ -186,20 +186,3 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
             print(f"Webhook registered for {topic} at {shop}")
         else:
             print(f"Failed to register webhook for {topic} at {shop}: {response.text}")
-
-async def daily_poll():
-    shops = [
-        key.replace("SHOPIFY_ACCESS_TOKEN_", "").replace("_", ".")
-        for key in os.environ
-        if key.startswith("SHOPIFY_ACCESS_TOKEN_")
-    ]
-    
-    for shop in shops:
-        try:
-            access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
-            access_token = os.getenv(access_token_key)
-            if access_token:
-                shopify_data = await get_shopify_data(access_token, shop)
-                print(f"Polled and processed data for {shop}: {shopify_data}")
-        except Exception as e:
-            print(f"Polling failed for {shop}: {str(e)}")
