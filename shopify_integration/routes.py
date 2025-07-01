@@ -1,7 +1,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data, preprocess_shopify_data
+from .utils import exchange_code_for_token, get_shopify_data, preprocess_shopify_data, verify_hmac, register_webhooks
 from shared.utils import generate_state_token, validate_state_token
 
 router = APIRouter()
@@ -10,7 +10,7 @@ router = APIRouter()
 async def start_oauth(shop_name: str):
     client_id = os.getenv("SHOPIFY_API_KEY")
     redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
-    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products"
+    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_webhooks"
 
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Shopify app config missing")
@@ -43,6 +43,8 @@ async def oauth_callback(request: Request):
 
     os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"] = token_data["access_token"]
 
+    await register_webhooks(shop, token_data["access_token"])
+
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
     preprocessed_data = preprocess_shopify_data(shopify_data)
 
@@ -50,3 +52,23 @@ async def oauth_callback(request: Request):
         "token_data": token_data,
         "preprocessed_data": preprocessed_data,
     })
+
+@router.post("/webhook")
+async def shopify_webhook(request: Request):
+    if not await verify_hmac(request):
+        raise HTTPException(status_code=401, detail="Invalid HMAC signature")
+
+    shop = request.headers.get("X-Shopify-Shop-Domain")
+    if not shop:
+        raise HTTPException(status_code=400, detail="Missing shop domain")
+
+    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
+    access_token = os.getenv(access_token_key)
+    if not access_token:
+        raise HTTPException(status_code=500, detail="Access token not found")
+
+    payload = await request.json()
+    event_type = request.headers.get("X-Shopify-Topic")
+    print(f"Received {event_type} event from {shop}: {payload}")
+
+    return {"status": "success"}

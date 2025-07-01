@@ -1,6 +1,9 @@
 import os
+import hmac
+import hashlib
+import base64
 import httpx
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 import asyncio
 
 async def exchange_code_for_token(code: str, shop: str):
@@ -117,4 +120,69 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
         except httpx.HTTPStatusError as e:
             if attempt == retries - 1 or e.response.status_code != 429:
                 raise
-            await asyncio.sleep(2 ** attempt)
+            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+
+async def verify_hmac(request: Request) -> bool:
+    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
+    if not hmac_header:
+        return False
+
+    body = await request.body()
+    secret = os.getenv("SHOPIFY_API_SECRET")
+    expected_hmac = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+    expected_hmac_b64 = base64.b64encode(expected_hmac).decode()
+
+    return hmac.compare_digest(hmac_header, expected_hmac_b64)
+
+async def register_webhooks(shop: str, access_token: str):
+    webhook_topics = [
+        "products/create",
+        "products/update",
+        "products/delete",
+        "inventory_levels/update",
+        "orders/create",
+        "orders/updated",
+        "discounts/create",
+        "discounts/update",
+        "discounts/delete",
+        "collections/create",
+        "collections/update",
+        "collections/delete"
+    ]
+    webhook_address = os.getenv("WEBHOOK_ADDRESS")
+    if not webhook_address:
+        raise HTTPException(status_code=500, detail="WEBHOOK_ADDRESS not set")
+
+    existing_webhooks = await get_existing_webhooks(shop, access_token)
+    for topic in webhook_topics:
+        if not any(w["topic"] == topic for w in existing_webhooks):
+            await register_webhook(shop, access_token, topic, webhook_address)
+        else:
+            print(f"Webhook for {topic} already exists for {shop}")
+
+async def get_existing_webhooks(shop: str, access_token: str):
+    url = f"https://{shop}/admin/api/2025-04/webhooks.json"
+    headers = {"X-Shopify-Access-Token": access_token}
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+        return response.json().get("webhooks", [])
+
+async def register_webhook(shop: str, access_token: str, topic: str, address: str):
+    url = f"https://{shop}/admin/api/2025-04/webhooks.json"
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "webhook": {
+            "topic": topic,
+            "address": address,
+            "format": "json"
+        }
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, headers=headers, json=payload)
+        if response.status_code == 201:
+            print(f"Webhook registered for {topic} at {shop}")
+        else:
+            print(f"Failed to register webhook for {topic} at {shop}: {response.text}")
