@@ -1,32 +1,7 @@
-# digitalocean_genai/utils.py
-
 import os
 import boto3
 import json
-import httpx
-import hmac
-import hashlib
-import base64
-from fastapi import HTTPException, Request
-
-async def verify_shopify_webhook(request: Request) -> bool:
-    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
-    if not hmac_header:
-        return False
-
-    raw_body = await request.body()
-    shopify_api_secret = os.getenv("SHOPIFY_API_SECRET")
-    if not shopify_api_secret:
-        raise HTTPException(status_code=500, detail="Shopify API secret missing")
-
-    expected_hmac = hmac.new(
-        shopify_api_secret.encode(),
-        raw_body,
-        hashlib.sha256
-    ).digest()
-    expected_hmac_b64 = base64.b64encode(expected_hmac).decode()
-
-    return hmac.compare_digest(hmac_header, expected_hmac_b64)
+from fastapi import HTTPException
 
 def upload_to_spaces(data: dict, key: str):
     spaces_access_key = os.getenv("SPACES_ACCESS_KEY")
@@ -56,29 +31,3 @@ def upload_to_spaces(data: dict, key: str):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Spaces upload failed: {str(e)}")
-
-async def reindex_knowledge_base(knowledge_base_id: str, spaces_key: str):
-    access_token = os.getenv("DIGITALOCEAN_ACCESS_TOKEN")
-    if not access_token:
-        raise HTTPException(status_code=500, detail="DigitalOcean access token missing")
-
-    url = f"https://api.digitalocean.com/v2/genai/knowledge_bases/{knowledge_base_id}/reindex"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "source": {
-            "type": "spaces",
-            "bucket": os.getenv("SPACES_BUCKET"),
-            "key": spaces_key,
-            "region": os.getenv("SPACES_REGION", "nyc3")
-        }
-    }
-
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=500, detail=f"Knowledge base reindex failed: {str(e)}")

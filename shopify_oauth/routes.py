@@ -1,9 +1,9 @@
 import os
-import re
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_shopify_data, preprocess_shopify_data
 from shared.utils import generate_state_token, validate_state_token
+from digitalocean_genai.utils import upload_to_spaces
 
 router = APIRouter()
 
@@ -42,10 +42,21 @@ async def oauth_callback(request: Request):
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
+    os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"] = token_data["access_token"]
+
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
     preprocessed_data = preprocess_shopify_data(shopify_data)
 
+    spaces_key = f"{shop}/preprocessed_data.json"
+    try:
+        upload_to_spaces(preprocessed_data, spaces_key)
+        upload_status = "success"
+    except Exception as e:
+        print(f"Failed to upload to Spaces: {str(e)}")
+        upload_status = "failed"
+
     return JSONResponse(content={
         "token_data": token_data,
-        "preprocessed_data": preprocessed_data
+        "preprocessed_data": preprocessed_data,
+        "digitalocean_upload": upload_status
     })
