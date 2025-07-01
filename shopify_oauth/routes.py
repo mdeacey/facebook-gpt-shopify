@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_shopify_data, preprocess_shopify_data
 from shared.utils import generate_state_token, validate_state_token
-from digitalocean_genai.utils import upload_to_spaces
 
 router = APIRouter()
 
@@ -46,3 +45,8 @@ async def oauth_callback(request: Request):
 
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
     preprocessed_data = preprocess_shopify_data(shopify_data)
+
+    return JSONResponse(content={
+        "token_data": token_data,
+        "preprocessed_data": preprocessed_data,
+    })
