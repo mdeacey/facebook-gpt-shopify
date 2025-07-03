@@ -1,10 +1,12 @@
 import os
-import hmac
+import httpx
+import asyncio
 import hashlib
 import base64
-import httpx
+import hmac
 from fastapi import HTTPException, Request
-import asyncio
+import boto3
+from digitalocean_integration.utils import has_data_changed, upload_to_spaces
 
 async def exchange_code_for_token(code: str, shop: str):
     url = f"https://{shop}/admin/oauth/access_token"
@@ -188,7 +190,7 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
 async def poll_shopify_data(access_token: str, shop: str) -> dict:
     try:
         shopify_data = await get_shopify_data(access_token, shop)
-        return {"status": "success"}
+        return {"status": "success", "data": shopify_data}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -204,10 +206,24 @@ async def daily_poll():
             access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
             access_token = os.getenv(access_token_key)
             if access_token:
-                result = await poll_shopify_data(access_token, shop)
-                if result["status"] == "success":
-                    print(f"Polled data for {shop}: Success")
+                poll_result = await poll_shopify_data(access_token, shop)
+                if poll_result["status"] == "success":
+                    shopify_data = poll_result["data"]
+                    spaces_key = f"{shop}/shopify_data.json"
+                    session = boto3.session.Session()
+                    s3_client = session.client(
+                        "s3",
+                        region_name=os.getenv("SPACES_REGION", "nyc3"),
+                        endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
+                        aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
+                        aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
+                    )
+                    if has_data_changed(shopify_data, spaces_key, s3_client):
+                        upload_to_spaces(shopify_data, spaces_key, s3_client)
+                        print(f"Polled and uploaded data for {shop}: Success")
+                    else:
+                        print(f"Polled data for {shop}: No upload needed, data unchanged")
                 else:
-                    print(f"Polling failed for {shop}: {result['message']}")
+                    print(f"Polling failed for {shop}: {poll_result['message']}")
         except Exception as e:
             print(f"Daily poll failed for {shop}: {str(e)}")
