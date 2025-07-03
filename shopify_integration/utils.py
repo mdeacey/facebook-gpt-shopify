@@ -203,13 +203,18 @@ async def daily_poll():
     
     for shop in shops:
         try:
-            access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
+            shop_key = shop.replace('.', '_')
+            access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop_key}"
             access_token = os.getenv(access_token_key)
+            user_uuid = os.getenv(f"USER_UUID_{shop_key}")
+            if not user_uuid:
+                print(f"User UUID not found for shop {shop}")
+                continue
             if access_token:
                 poll_result = await poll_shopify_data(access_token, shop)
                 if poll_result["status"] == "success":
                     shopify_data = await get_shopify_data(access_token, shop)
-                    spaces_key = f"{shop}/shopify_data.json"
+                    spaces_key = f"{user_uuid}/shopify/shopify_data.json"
                     session = boto3.session.Session()
                     s3_client = session.client(
                         "s3",

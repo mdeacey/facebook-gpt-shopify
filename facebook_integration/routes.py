@@ -14,7 +14,7 @@ import httpx
 router = APIRouter()
 
 @router.get("/login")
-async def start_oauth():
+async def start_oauth(uuid: str):
     client_id = os.getenv("FACEBOOK_APP_ID")
     redirect_uri = os.getenv("FACEBOOK_REDIRECT_URI")
     scope = "pages_messaging,pages_show_list,pages_manage_metadata"
@@ -25,7 +25,7 @@ async def start_oauth():
     if not re.match(r'^\d{15,20}$', client_id):
         raise HTTPException(status_code=500, detail="Invalid FACEBOOK_APP_ID format")
 
-    state = generate_state_token()
+    state = generate_state_token(extra_data=uuid)
 
     auth_url = (
         f"https://www.facebook.com/v19.0/dialog/oauth?"
@@ -44,7 +44,9 @@ async def oauth_callback(request: Request):
     if not incoming_state:
         raise HTTPException(status_code=400, detail="Missing state parameter")
 
-    validate_state_token(incoming_state)
+    user_uuid = validate_state_token(incoming_state)
+    if not user_uuid:
+        raise HTTPException(status_code=400, detail="Invalid UUID in state token")
 
     token_data = await exchange_code_for_token(code)
     if "access_token" not in token_data:
@@ -66,6 +68,7 @@ async def oauth_callback(request: Request):
     for page in pages.get("data", []):
         page_id = page["id"]
         os.environ[f"FACEBOOK_ACCESS_TOKEN_{page_id}"] = page["access_token"]
+        os.environ[f"PAGE_UUID_{page_id}"] = user_uuid  # Map page to UUID
 
         existing_subscriptions = await get_existing_subscriptions(page_id, page["access_token"])
         if not any("name" in sub.get("subscribed_fields", []) for sub in existing_subscriptions):
@@ -101,7 +104,7 @@ async def oauth_callback(request: Request):
         upload_status_result = {"status": "failed", "message": "Tests failed"}
         if webhook_test_result.get("status") == "success" and polling_result.get("status") == "success":
             try:
-                spaces_key = f"facebook/{page_id}/page_data.json"
+                spaces_key = f"{user_uuid}/facebook_messenger/{page_id}/page_data.json"
                 if has_data_changed(pages, spaces_key, s3_client):
                     upload_to_spaces(pages, spaces_key, s3_client)
                     print(f"Uploaded data to Spaces for page {page_id}")
@@ -122,6 +125,7 @@ async def oauth_callback(request: Request):
     }
 
     return JSONResponse(content={
+        "user_uuid": user_uuid,
         "pages": safe_pages,
         "webhook_test": webhook_test_result,
         "polling_test": polling_test_results,
@@ -157,11 +161,16 @@ async def facebook_webhook(request: Request):
             print(f"Access token not found for page {page_id}")
             continue
 
+        user_uuid = os.getenv(f"PAGE_UUID_{page_id}")
+        if not user_uuid:
+            print(f"User UUID not found for page {page_id}")
+            continue
+
         print(f"Received webhook event for page {page_id}: {entry}")
 
         try:
             page_data = await get_facebook_data(access_token)
-            spaces_key = f"facebook/{page_id}/page_data.json"
+            spaces_key = f"{user_uuid}/facebook_messenger/{page_id}/page_data.json"
             if has_data_changed(page_data, spaces_key, s3_client):
                 upload_to_spaces(page_data, spaces_key, s3_client)
                 print(f"Updated data in Spaces for page {page_id}")

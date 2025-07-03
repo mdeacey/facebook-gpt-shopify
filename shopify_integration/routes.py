@@ -1,6 +1,7 @@
 import os
 import json
 import boto3
+import uuid
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, poll_shopify_data
@@ -48,7 +49,11 @@ async def oauth_callback(request: Request):
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
-    os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"] = token_data["access_token"]
+    shop_key = shop.replace('.', '_')
+    os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop_key}"] = token_data["access_token"]
+
+    user_uuid = str(uuid.uuid4())
+    os.environ[f"USER_UUID_{shop_key}"] = user_uuid
 
     webhook_test_result = {"status": "failed", "message": "Webhook registration failed"}
     try:
@@ -81,7 +86,7 @@ async def oauth_callback(request: Request):
 
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
 
-    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
+    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop_key}"
     access_token = os.getenv(access_token_key)
     polling_test_result = await poll_shopify_data(access_token, shop)
     print(f"Polling test result for {shop}: {polling_test_result}")
@@ -100,7 +105,7 @@ async def oauth_callback(request: Request):
                 aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
                 aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
             )
-            spaces_key = f"{shop}/shopify_data.json"
+            spaces_key = f"{user_uuid}/shopify/shopify_data.json"
             if has_data_changed(shopify_data, spaces_key, s3_client):
                 upload_to_spaces(shopify_data, spaces_key, s3_client)
                 print(f"Uploaded data to Spaces for {shop}")
@@ -112,6 +117,7 @@ async def oauth_callback(request: Request):
             print(f"Failed to upload to Spaces for {shop}: {str(e)}")
 
     return JSONResponse(content={
+        "user_uuid": user_uuid,
         "token_data": token_data,
         "shopify_data": shopify_data,
         "webhook_test": webhook_test_result,
@@ -128,10 +134,15 @@ async def shopify_webhook(request: Request):
     if not shop:
         raise HTTPException(status_code=400, detail="Missing shop domain")
 
-    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
+    shop_key = shop.replace('.', '_')
+    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop_key}"
     access_token = os.getenv(access_token_key)
     if not access_token:
         raise HTTPException(status_code=500, detail="Access token not found")
+
+    user_uuid = os.getenv(f"USER_UUID_{shop_key}")
+    if not user_uuid:
+        raise HTTPException(status_code=500, detail="User UUID not found for shop")
 
     payload = await request.json()
     event_type = request.headers.get("X-Shopify-Topic")
@@ -139,7 +150,7 @@ async def shopify_webhook(request: Request):
 
     try:
         shopify_data = await get_shopify_data(access_token, shop)
-        spaces_key = f"{shop}/shopify_data.json"
+        spaces_key = f"{user_uuid}/shopify/shopify_data.json"
         session = boto3.session.Session()
         s3_client = session.client(
             "s3",
