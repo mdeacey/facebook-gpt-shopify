@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from facebook_oauth.routes import router as facebook_oauth_router
+from facebook_integration.routes import router as facebook_oauth_router
 from shopify_integration.routes import router as shopify_oauth_router
 from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
