@@ -23,11 +23,13 @@ async def get_facebook_data(access_token: str):
     url = "https://graph.facebook.com/v19.0/me/accounts"
     params = {
         "access_token": access_token,
-        "fields": "id,name,description,category,access_token"
+        "fields": "id,name,category,about,website,link,picture,fan_count,verification_status,location,phone,email,created_time,access_token"
     }
     async with httpx.AsyncClient() as client:
         response = await client.get(url, params=params)
-        response.raise_for_status()
+        if response.status_code != 200:
+            print(f"Facebook API error: {response.status_code} - {response.text}")
+            response.raise_for_status()
         return response.json()
 
 async def verify_webhook(request: Request) -> bool:
@@ -52,7 +54,7 @@ async def register_webhooks(page_id: str, access_token: str):
     url = f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps"
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
-        "subscribed_fields": "name,description,category",
+        "subscribed_fields": "name,category",
         "callback_url": webhook_address,
         "verify_token": os.getenv("FACEBOOK_VERIFY_TOKEN", "default_verify_token")
     }
@@ -72,7 +74,10 @@ async def get_existing_subscriptions(page_id: str, access_token: str):
 
 async def poll_facebook_data(access_token: str, page_id: str) -> dict:
     try:
-        page_data = await get_facebook_data(access_token)
+        user_access_token = os.getenv("FACEBOOK_USER_ACCESS_TOKEN")
+        if not user_access_token:
+            raise HTTPException(status_code=500, detail="User access token not found")
+        page_data = await get_facebook_data(user_access_token)
         session = boto3.session.Session()
         s3_client = session.client(
             "s3",

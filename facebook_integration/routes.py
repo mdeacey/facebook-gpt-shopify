@@ -50,6 +50,8 @@ async def oauth_callback(request: Request):
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
+    os.environ["FACEBOOK_USER_ACCESS_TOKEN"] = token_data["access_token"]
+
     pages = await get_facebook_data(token_data["access_token"])
 
     session = boto3.session.Session()
@@ -66,10 +68,10 @@ async def oauth_callback(request: Request):
         os.environ[f"FACEBOOK_ACCESS_TOKEN_{page_id}"] = page["access_token"]
 
         existing_subscriptions = await get_existing_subscriptions(page_id, page["access_token"])
-        if not any("name" in sub.get("subscribed_fields", "").split(",") for sub in existing_subscriptions):
+        if not any("name" in sub.get("subscribed_fields", []) for sub in existing_subscriptions):
             await register_webhooks(page_id, page["access_token"])
         else:
-            print(f"Webhook subscription for 'name,description,category' already exists for page {page_id}")
+            print(f"Webhook subscription for 'name,category' already exists for page {page_id}")
 
     test_payload = {"object": "page", "entry": [{"id": "test_page_id", "changes": [{"field": "name", "value": "Test Page"}]}]}
     secret = os.getenv("FACEBOOK_APP_SECRET")
@@ -111,9 +113,16 @@ async def oauth_callback(request: Request):
                 print(f"Failed to upload to Spaces for page {page_id}: {str(e)}")
         upload_status_results.append({"page_id": page_id, "result": upload_status_result})
 
+    safe_pages = {
+        "data": [
+            {k: v for k, v in page.items() if k != "access_token"}
+            for page in pages.get("data", [])
+        ],
+        "paging": pages.get("paging", {})
+    }
+
     return JSONResponse(content={
-        "token_data": token_data,
-        "pages": pages,
+        "pages": safe_pages,
         "webhook_test": webhook_test_result,
         "polling_test": polling_test_results,
         "upload_status": upload_status_results
