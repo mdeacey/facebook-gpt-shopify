@@ -3,6 +3,8 @@ import httpx
 import hmac
 import hashlib
 from fastapi import HTTPException, Request
+import boto3
+from digitalocean_integration.utils import has_data_changed, upload_to_spaces
 
 async def exchange_code_for_token(code: str):
     url = "https://graph.facebook.com/v19.0/oauth/access_token"
@@ -70,7 +72,21 @@ async def get_existing_subscriptions(page_id: str, access_token: str):
 
 async def poll_facebook_data(access_token: str, page_id: str) -> dict:
     try:
-        await get_facebook_data(access_token)
+        page_data = await get_facebook_data(access_token)
+        session = boto3.session.Session()
+        s3_client = session.client(
+            "s3",
+            region_name=os.getenv("SPACES_REGION", "nyc3"),
+            endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
+            aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
+            aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
+        )
+        spaces_key = f"facebook/{page_id}/page_data.json"
+        if has_data_changed(page_data, spaces_key, s3_client):
+            upload_to_spaces(page_data, spaces_key, s3_client)
+            print(f"Polled and uploaded data for page {page_id}: Success")
+        else:
+            print(f"Polled data for page {page_id}: No upload needed, data unchanged")
         return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}

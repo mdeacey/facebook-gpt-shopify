@@ -1,78 +1,70 @@
-### Chapter 3: DigitalOcean Integration
+# Chapter 5: DigitalOcean Integration
 
-#### Subchapter 3.2: Shopify Data Synchronization with DigitalOcean Spaces
+## Subchapter 5.2: Shopify Data Synchronization with DigitalOcean Spaces
 
-This subchapter integrates DigitalOcean Spaces into your FastAPI application to store and keep Shopify data updated for the GPT Messenger sales bot. We’ll configure environment variables, create utilities for checking data changes and uploading to Spaces, update the Shopify callback route to test webhook and polling functionality before uploading initial data post-OAuth (if changed), enhance webhook handling for real-time updates, and leverage daily polling to ensure data consistency. This builds on the Shopify integration from Subchapter 2.1 and assumes a Shopify development store, app credentials, and DigitalOcean Spaces setup (Subchapter 3.1). The focus is on code implementation, ensuring webhooks and polling work reliably before syncing shop details, products, discounts, and collections to Spaces, with uploads optimized to occur only when data differs.
+### Introduction
+This subchapter documents the integration of DigitalOcean Spaces into your FastAPI application to store and keep Shopify data updated for the GPT Messenger sales bot. It leverages the existing Shopify integration from Chapter 3, reusing utilities for checking data changes and uploading to Spaces, testing webhook and polling functionality before uploading initial data post-OAuth (if changed), handling real-time updates via webhooks, and ensuring data consistency through daily polling. This builds on the Shopify setup from Chapter 3 and assumes a Shopify development store and DigitalOcean Spaces setup (Subchapter 5.3). The focus is on code implementation, ensuring webhooks and polling work reliably before syncing non-sensitive data (e.g., shop details, products, discounts, collections) to Spaces, with uploads optimized to occur only when data differs.
 
 ---
 
-##### Step 1: Why Synchronize Shopify Data with DigitalOcean Spaces?
-
+### Step 1: Why Synchronize Shopify Data with DigitalOcean Spaces?
 The sales bot requires up-to-date Shopify data to generate accurate recommendations and promotions. Storing and updating this data in DigitalOcean Spaces:
-
 - **Ensures Fresh Data**: Combines initial uploads, real-time webhook updates, and daily polling for consistency.
 - **Scales Efficiently**: Uses cloud storage to handle data for multiple shops, offloading the app.
 - **Optimizes Resources**: Uploads only when data changes, reducing API calls and costs.
 
-We’ll configure environment variables, create utilities for checking data changes and uploading to Spaces, modify the Shopify callback to test webhooks and polling before uploading initial data, enhance the webhook endpoint for incremental updates, and update daily polling to sync data, ensuring uploads only occur after successful tests and when data differs. The existing `generate_state_token` and `validate_state_token` functions from `shared/utils.py` are used in the OAuth flow to secure the callback, so no additional state token logic is needed for Spaces operations. All status fields in the callback response (`webhook_test`, `polling_test`, `upload_status_result`) will use a consistent structure (`{"status": "success"}` or `{"status": "failed", "message": "..."}`) and naming convention (`*_result`).
+The existing `shopify_integration/routes.py` and `shopify_integration/utils.py` already implement Spaces syncing, using `digitalocean_integration/utils.py` functions (`compute_data_hash`, `has_data_changed`, `upload_to_spaces`). The OAuth callback tests webhooks and polling before uploading, the webhook endpoint processes real-time updates, and daily polling syncs data, with uploads conditional on successful tests and data changes. The `generate_state_token` and `validate_state_token` functions from `shared/utils.py` secure the OAuth flow, so no additional state token logic is needed. All status fields (`webhook_test`, `polling_test`, `upload_status_result`) use a consistent structure (`{"status": "success"}` or `{"status": "failed", "message": "..."}`) and `*_result` naming convention.
 
 ---
 
-##### Step 2: Project Structure
-
-The current codebase includes `shopify_integration`, `facebook_oauth`, and `shared` modules. We’ll add a `digitalocean_integration` module for Spaces utilities:
+### Step 2: Project Structure
+The codebase includes `shopify_integration`, `facebook_integration`, `digitalocean_integration`, and `shared` modules. The Shopify integration already supports Spaces syncing, leveraging existing utilities:
 
 ```
-.
-├── facebook_oauth/
-│   ├── __init__.py
-│   ├── routes.py
-│   └── utils.py
-├── shopify_integration/
-│   ├── __init__.py
-│   ├── routes.py
-│   └── utils.py
-├── digitalocean_integration/
-│   ├── __init__.py
-│   └── utils.py         # New file for Spaces utilities
-├── shared/
-│   ├── __init__.py
-│   └── utils.py
-├── .env
-├── app.py
-└── requirements.txt
+└── ./
+    ├── digitalocean_integration/
+    │   ├── __init__.py
+    │   └── utils.py         # Contains Spaces utilities
+    ├── facebook_integration/
+    │   ├── __init__.py
+    │   ├── routes.py
+    │   └── utils.py
+    ├── shopify_integration/
+    │   ├── __init__.py
+    │   ├── routes.py        # Handles Spaces syncing
+    │   └── utils.py         # Handles polling with Spaces
+    ├── shared/
+    │   ├── __init__.py
+    │   └── utils.py
+    ├── .env
+    └── app.py               # Schedules polls
 ```
 
-- **`digitalocean_integration/utils.py`**: Handles data change checks and uploads to Spaces.
-- **`shopify_integration/routes.py`**: Updated to test webhooks/polling before initial upload and enhance webhook processing.
-- **`shopify_integration/utils.py`**: Updated for polling with Spaces integration.
-- **`.env`**: Extended with Spaces credentials (Step 3).
-- **`app.py`**: Already schedules daily polling via APScheduler.
+- **`digitalocean_integration/utils.py`**: Handles data change checks and uploads, reused for Shopify.
+- **`shopify_integration/routes.py`**: Tests webhooks/polling before initial upload and processes webhook updates.
+- **`shopify_integration/utils.py`**: Handles polling with Spaces integration.
+- **`.env`**: Includes Spaces credentials.
+- **`app.py`**: Schedules `shopify_daily_poll`.
 
-This structure maintains the codebase’s modularity, keeping functionality grouped and reusable.
+This structure maintains modularity, keeping functionality grouped and reusable.
 
 ---
 
-##### Step 3: Configure Environment Variables
-
-**Action**: Add DigitalOcean Spaces credentials to `.env`.
+### Step 3: Configure Environment Variables
+**Action**: Ensure `.env` includes DigitalOcean Spaces credentials alongside Shopify credentials.
 
 **Why?**  
-These variables authenticate Spaces operations, keeping sensitive data secure, as in the codebase’s approach. Configuring them first ensures they’re available for the Spaces utility functions.
+These variables authenticate Spaces operations, keeping sensitive data secure, consistent with the codebase’s approach. They’re reused from the Facebook integration in Subchapter 5.1.
 
 **Instructions**:  
-Update `.env` with (assuming `.env.example` is part of the codebase):
+Verify `.env` contains:
 
 ```plaintext
-# Existing credentials
-FACEBOOK_APP_ID=your_app_id
-FACEBOOK_APP_SECRET=your_app_secret
-FACEBOOK_REDIRECT_URI=http://localhost:5000/facebook/callback
+# Shopify OAuth credentials
 SHOPIFY_API_KEY=your_shopify_api_key
 SHOPIFY_API_SECRET=your_shopify_api_secret
 SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
 SHOPIFY_WEBHOOK_ADDRESS=http://localhost:5000/shopify/webhook
-STATE_TOKEN_SECRET=replace_with_secure_token
 
 # DigitalOcean Spaces credentials
 SPACES_ACCESS_KEY=your_access_key
@@ -82,20 +74,19 @@ SPACES_REGION=nyc3
 ```
 
 **Why?**  
-- **New Variables**: Adds Spaces credentials, bucket, and region.
-- **Consistency**: Extends the existing `.env` setup, ensuring centralized configuration.
+- **Reused Variables**: Shopify uses the same Spaces credentials as Facebook, ensuring consistency.
+- **Security**: Storing credentials in `.env` aligns with the codebase’s practice.
 
 ---
 
-##### Step 4: Create digitalocean_integration/utils.py
-
-**Action**: Define functions to compute data hashes, check for data changes, and upload to Spaces.
+### Step 4: Verify `digitalocean_integration/utils.py`
+**Action**: Confirm `digitalocean_integration/utils.py` contains the necessary functions for Spaces syncing.
 
 **Why?**  
-Separating change detection (`has_data_changed`) from uploading (`upload_to_spaces`) enhances modularity, making each function reusable and focused on a single responsibility. Keeping `compute_data_hash` in this module ensures encapsulation, as it’s only used by `has_data_changed` for Spaces operations.
+The existing `compute_data_hash`, `has_data_changed`, and `upload_to_spaces` functions are reused for Shopify, ensuring efficient uploads only when data changes.
 
 **Instructions**:  
-Create `digitalocean_integration/utils.py` with:
+Verify `digitalocean_integration/utils.py`:
 
 ```python
 import os
@@ -138,23 +129,21 @@ def upload_to_spaces(data: dict, key: str, s3_client: boto3.client):
 ```
 
 **Why?**  
-- **Hashing**: `compute_data_hash` serializes JSON with sorted keys for consistent hashing, kept here as it’s only used by `has_data_changed`.
-- **Change Check**: `has_data_changed` compares hashes, returning `True` if data differs or the object is new.
-- **Upload**: `upload_to_spaces` handles the core upload, reusable for unconditional uploads.
-- **Error Handling**: Handles “NoSuchKey” for initial uploads and raises exceptions for other failures, aligning with the codebase.
-- **S3 Client**: Passed as a parameter to avoid redundant client creation.
+- **Hashing**: `compute_data_hash` ensures consistent JSON serialization for comparison.
+- **Change Check**: `has_data_changed` compares hashes, optimizing uploads.
+- **Upload**: `upload_to_spaces` handles JSON uploads with private ACL.
+- **Reusability**: Used by both Shopify and Facebook integrations.
 
 ---
 
-##### Step 5: Update shopify_integration/routes.py
-
-**Action**: Modify the `/shopify/callback` endpoint to test webhook and polling functionality before uploading initial Shopify data to Spaces (if changed), and enhance the `/shopify/webhook` endpoint for incremental updates.
+### Step 5: Verify `shopify_integration/routes.py`
+**Action**: Confirm the `/shopify/callback` endpoint tests webhooks/polling before uploading initial data to Spaces (if changed) and the `/shopify/webhook` endpoint handles incremental updates.
 
 **Why?**  
-The callback, triggered post-OAuth, is ideal for initializing data storage, with `validate_state_token` ensuring security. We’ll verify webhook and polling functionality before uploading, returning a consistent status structure (`{"status": "success"}` or `{"status": "failed", "message": "..."}`) for `webhook_test`, `polling_test`, and `upload_status_result` with a uniform `*_result` naming convention. The webhook endpoint processes real-time updates, uploading only when data changes. This ensures data integrity, efficiency, and consistent response formatting without additional state token logic for Spaces operations.
+The existing implementation tests functionality before uploading, ensuring data integrity and efficiency. The webhook endpoint syncs data on events, aligning with Facebook’s approach in Subchapter 5.1.
 
 **Instructions**:  
-Update `shopify_integration/routes.py` as follows:
+Verify `shopify_integration/routes.py`:
 
 ```python
 import os
@@ -209,7 +198,6 @@ async def oauth_callback(request: Request):
 
     os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"] = token_data["access_token"]
 
-    # Register webhooks
     webhook_test_result = {"status": "failed", "message": "Webhook registration failed"}
     try:
         await register_webhooks(shop, token_data["access_token"])
@@ -241,13 +229,11 @@ async def oauth_callback(request: Request):
 
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
 
-    # Test polling
     access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
     access_token = os.getenv(access_token_key)
     polling_test_result = await poll_shopify_data(access_token, shop)
     print(f"Polling test result for {shop}: {polling_test_result}")
 
-    # Upload to Spaces if webhook and polling tests succeed
     upload_status_result = {"status": "failed", "message": "Tests failed"}
     if (
         webhook_test_result.get("status") == "success"
@@ -299,7 +285,6 @@ async def shopify_webhook(request: Request):
     event_type = request.headers.get("X-Shopify-Topic")
     print(f"Received {event_type} event from {shop}: {payload}")
 
-    # Update data in Spaces if changed
     try:
         shopify_data = await get_shopify_data(access_token, shop)
         spaces_key = f"{shop}/shopify_data.json"
@@ -322,28 +307,16 @@ async def shopify_webhook(request: Request):
     return {"status": "success"}
 ```
 
-**Why?**  
-- **Imports**: Includes `has_data_changed` and `upload_to_spaces` from `digitalocean_integration.utils`.
-- **Callback Logic**: Tests webhook and polling functionality, then checks for data changes before uploading. Sets `upload_status_result` to `{"status": "success"}` if tests pass and data is either uploaded or unchanged, or `{"status": "failed", "message": "..."}` otherwise.
-- **Response**: Returns `token_data`, `shopify_data`, `webhook_test`, `polling_test`, and `upload_status_result` with consistent structures and `*_result` naming.
-- **Webhook Condition**: Uses only `webhook_test_result.get("status") == "success"`, ensuring no redundant checks.
-- **Status Consistency**: All status fields use `{"status": "success"}` or `{"status": "failed", "message": "..."}`.
-- **Webhook Update**: Checks for changes before uploading, logging when updates are skipped.
-- **Error Handling**: Logs failures without interrupting the flow, consistent with the codebase.
-- **S3 Client**: Creates a single client per operation for efficiency.
-- **No State Tokens**: Relies on existing `validate_state_token` for OAuth security.
-
 ---
 
-##### Step 6: Update shopify_integration/utils.py
-
-**Action**: Update the `poll_shopify_data` function to return only a status object, and update the `daily_poll` function to use the fetched Shopify data for Spaces uploads (if changed).
+### Step 6: Verify `shopify_integration/utils.py`
+**Action**: Confirm the `poll_shopify_data` and `daily_poll` functions handle Spaces syncing correctly.
 
 **Why?**  
-Returning only a status from `poll_shopify_data` aligns with the consistent status structure and avoids duplicating `shopify_data` in the `/shopify/callback` response. The `daily_poll` function fetches data separately for Spaces uploads, maintaining efficiency by reusing `poll_shopify_data`.
+The existing implementation ensures polling syncs data to Spaces only when changed, aligning with Facebook’s approach in Subchapter 5.1.
 
 **Instructions**:  
-Update `shopify_integration/utils.py`, preserving existing functions and updating `poll_shopify_data` and `daily_poll`, with all necessary imports:
+Verify `shopify_integration/utils.py`:
 
 ```python
 import os
@@ -537,7 +510,21 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
 
 async def poll_shopify_data(access_token: str, shop: str) -> dict:
     try:
-        await get_shopify_data(access_token, shop)
+        shopify_data = await get_shopify_data(access_token, shop)
+        session = boto3.session.Session()
+        s3_client = session.client(
+            "s3",
+            region_name=os.getenv("SPACES_REGION", "nyc3"),
+            endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
+            aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
+            aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
+        )
+        spaces_key = f"{shop}/shopify_data.json"
+        if has_data_changed(shopify_data, spaces_key, s3_client):
+            upload_to_spaces(shopify_data, spaces_key, s3_client)
+            print(f"Polled and uploaded data for {shop}: Success")
+        else:
+            print(f"Polled data for {shop}: No upload needed, data unchanged")
         return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -556,44 +543,73 @@ async def daily_poll():
             if access_token:
                 poll_result = await poll_shopify_data(access_token, shop)
                 if poll_result["status"] == "success":
-                    shopify_data = await get_shopify_data(access_token, shop)
-                    spaces_key = f"{shop}/shopify_data.json"
-                    session = boto3.session.Session()
-                    s3_client = session.client(
-                        "s3",
-                        region_name=os.getenv("SPACES_REGION", "nyc3"),
-                        endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-                        aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
-                        aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
-                    )
-                    if has_data_changed(shopify_data, spaces_key, s3_client):
-                        upload_to_spaces(shopify_data, spaces_key, s3_client)
-                        print(f"Polled and uploaded data for {shop}: Success")
-                    else:
-                        print(f"Polled data for {shop}: No upload needed, data unchanged")
+                    print(f"Polled data for {shop}: Success")
                 else:
                     print(f"Polling failed for {shop}: {poll_result['message']}")
         except Exception as e:
             print(f"Daily poll failed for {shop}: {str(e)}")
 ```
 
+---
+
+### Step 7: Verify `app.py`
+**Action**: Confirm `app.py` schedules `shopify_daily_poll` correctly.
+
 **Why?**  
-- **Imports**: Includes `hashlib`, `base64`, `hmac` for `verify_hmac`, and `boto3`, `has_data_changed`, `upload_to_spaces` for Spaces operations.
-- **Updated `poll_shopify_data`**: Returns `{"status": "success"}` or `{"status": "error", "message": "..."}`, omitting `data` to avoid duplication with `shopify_data`.
-- **Updated `daily_poll`**: Fetches `shopify_data` directly via `get_shopify_data` after a successful `poll_result`, as `poll_shopify_data` no longer returns data.
-- **Error Handling**: Checks `poll_result["status"]` and logs failures, allowing the loop to continue.
-- **Logging**: Distinguishes between successful uploads and skipped updates.
-- **Scheduler**: Uses the existing `app.py` scheduler (runs at 00:00 daily).
-- **Preservation**: Retains existing functions unchanged, adding necessary imports.
+The existing scheduler runs `shopify_daily_poll` at midnight, aligning with Facebook’s polling in Subchapter 5.1.
+
+**Instructions**:  
+Verify `app.py`:
+
+```python
+from fastapi import FastAPI
+from facebook_integration.routes import router as facebook_oauth_router
+from shopify_integration.routes import router as shopify_oauth_router
+from starlette.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from shopify_integration.utils import daily_poll as shopify_daily_poll
+from facebook_integration.utils import daily_poll as facebook_daily_poll
+import atexit
+
+load_dotenv()
+
+app = FastAPI(title="Facebook and Shopify OAuth with FastAPI")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust in production
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(facebook_oauth_router, prefix="/facebook")
+app.include_router(shopify_oauth_router, prefix="/shopify")
+
+@app.get("/")
+async def root():
+    return {"status": "ok"}
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(shopify_daily_poll, CronTrigger(hour=0, minute=0))
+scheduler.add_job(facebook_daily_poll, CronTrigger(hour=0, minute=0))
+scheduler.start()
+
+atexit.register(lambda: scheduler.shutdown())
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=5000, reload=True)
+```
 
 ---
 
-##### Step 7: Update requirements.txt
-
-**Action**: Add `boto3` to support Spaces integration.
+### Step 8: Verify `requirements.txt`
+**Action**: Ensure `boto3` is included for Spaces integration.
 
 **Instructions**:  
-Update `requirements.txt`:
+Verify `requirements.txt`:
 
 ```plaintext
 fastapi
@@ -605,21 +621,18 @@ boto3
 ```
 
 **Why?**  
-- **Boto3**: Required for Spaces API interactions, building on existing dependencies.
+- `boto3` is required for Spaces API interactions, already included.
 
 ---
 
-##### Summary: Why This Subchapter Matters
-
-- **Data Synchronization**: Integrates Spaces for initial data storage, real-time webhook updates, and daily polling, with uploads contingent on successful tests and data changes.
-- **Efficient Design**: Avoids redundant uploads and API calls by checking for changes.
-- **Modular Design**: Adds `digitalocean_integration/utils.py` with Spaces-specific functions (`compute_data_hash`, `has_data_changed`, `upload_to_spaces`) and extends existing modules.
+### Summary: Why This Subchapter Matters
+- **Data Synchronization**: Integrates Spaces for Shopify data (shop details, products, discounts, collections), ensuring initial uploads, real-time webhook updates, and daily polling maintain consistency.
+- **Efficient Design**: Uploads only when data changes, reusing `has_data_changed` and `upload_to_spaces`.
+- **Modular Design**: Leverages `digitalocean_integration` utilities, maintaining codebase modularity.
 - **Consistent Response**: Uses uniform status structures (`{"status": "success"}` or `{"status": "failed", "message": "..."}`) and `*_result` naming for `webhook_test`, `polling_test`, and `upload_status_result`.
-- **Bot Readiness**: Ensures the sales bot has up-to-date Shopify data for accurate recommendations.
+- **Bot Readiness**: Ensures the sales bot has up-to-date Shopify data for recommendations and promotions.
 
-**Next Steps**:  
-- Set up DigitalOcean Spaces and obtain credentials (Subchapter 3.1).  
-- Test the full synchronization flow, including edge cases (Subchapter 3.3).  
-- Optimize webhook handling for specific event types (Subchapter 3.3).
-
----
+### Next Steps:
+- Set up a DigitalOcean Spaces bucket and obtain credentials (Subchapter 5.3).
+- Test the full synchronization flow for Shopify and Facebook data (Subchapter 5.4).
+- Optimize webhook handling for specific event types if needed.
