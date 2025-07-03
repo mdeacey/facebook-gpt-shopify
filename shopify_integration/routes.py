@@ -2,7 +2,7 @@ import os
 import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, daily_poll
+from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, poll_shopify_data
 from shared.utils import generate_state_token, validate_state_token
 import hmac
 import hashlib
@@ -15,7 +15,7 @@ router = APIRouter()
 async def start_oauth(shop_name: str):
     client_id = os.getenv("SHOPIFY_API_KEY")
     redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
-    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_products,write_orders,write_inventory"
+    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_products,write_inventory"
 
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Shopify app config missing")
@@ -69,17 +69,19 @@ async def oauth_callback(request: Request):
             },
             data=json.dumps(test_payload)
         )
-        webhook_test_result = response.json() if response.status_code == 200 else {"error": response.text}
+        webhook_test_result = response.json() if response.status_code == 200 else {"status": "error", "message": response.text}
         print(f"Webhook test result for {shop}: {webhook_test_result}")
 
-    poll_test_result = await daily_poll()
-    print(f"Polling test result for {shop}: {poll_test_result}")
+    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
+    access_token = os.getenv(access_token_key)
+    polling_test_result = await poll_shopify_data(access_token, shop)
+    print(f"Polling test result for {shop}: {polling_test_result}")
 
     return JSONResponse(content={
         "token_data": token_data,
         "shopify_data": shopify_data,
         "webhook_test": webhook_test_result,
-        "polling_test": poll_test_result
+        "polling_test": polling_test_result
     })
 
 @router.post("/webhook")

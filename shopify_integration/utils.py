@@ -140,8 +140,6 @@ async def register_webhooks(shop: str, access_token: str):
         "products/update",
         "products/delete",
         "inventory_levels/update",
-        "orders/create",
-        "orders/updated",
         "discounts/create",
         "discounts/update",
         "discounts/delete",
@@ -187,6 +185,13 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
         else:
             print(f"Failed to register webhook for {topic} at {shop}: {response.text}")
 
+async def poll_shopify_data(access_token: str, shop: str) -> dict:
+    try:
+        shopify_data = await get_shopify_data(access_token, shop)
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 async def daily_poll():
     shops = [
         key.replace("SHOPIFY_ACCESS_TOKEN_", "").replace("_", ".")
@@ -194,16 +199,15 @@ async def daily_poll():
         if key.startswith("SHOPIFY_ACCESS_TOKEN_")
     ]
     
-    result = {"status": "completed", "details": {}}
     for shop in shops:
         try:
             access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
             access_token = os.getenv(access_token_key)
             if access_token:
-                shopify_data = await get_shopify_data(access_token, shop)
-                result["details"][shop] = {"status": "success", "data": shopify_data}
-                print(f"Polled data for {shop}: {shopify_data}")
+                result = await poll_shopify_data(access_token, shop)
+                if result["status"] == "success":
+                    print(f"Polled data for {shop}: Success")
+                else:
+                    print(f"Polling failed for {shop}: {result['message']}")
         except Exception as e:
-            result["details"][shop] = {"status": "error", "message": str(e)}
-            print(f"Polling failed for {shop}: {str(e)}")
-    return result
+            print(f"Daily poll failed for {shop}: {str(e)}")

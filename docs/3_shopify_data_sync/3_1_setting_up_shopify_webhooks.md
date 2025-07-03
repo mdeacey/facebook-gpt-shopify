@@ -1,17 +1,18 @@
 # Subchapter 1.1: Setting Up Shopify Webhooks for Real-Time Updates
 
 ## Introduction
-Shopify webhooks enable your application to receive real-time notifications about store events, keeping your sales bot up-to-date. This subchapter guides you through setting up a secure webhook endpoint in your FastAPI application, integrating HMAC verification, registering webhooks during the OAuth flow with appropriate scopes, and including an automatic test to verify functionality post-authentication.
+Shopify webhooks enable your application to receive real-time notifications about store events, focusing on stock changes and non-sensitive data to keep your sales bot up-to-date. This subchapter guides you through setting up a secure webhook endpoint in your FastAPI application, integrating HMAC verification, registering webhooks during the OAuth flow with appropriate scopes, and including an automatic test to verify functionality.
 
 ## Prerequisites
 - Completed Shopify OAuth setup from Chapter 2.
 - Your FastAPI application is running locally or in a production-like environment.
 - Shopify API credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`, `SHOPIFY_WEBHOOK_ADDRESS`) are set.
+- `apscheduler` is installed (`pip install apscheduler`).
 
 ---
 
 ## Step 1: Update `shopify_integration/routes.py`
-Configure the webhook endpoint and enhance the OAuth callback to register webhooks and test them automatically with corrected scopes.
+Configure the webhook endpoint, OAuth flow, and integrated test for webhooks.
 
 **Updated File: `shopify_integration/routes.py`**
 ```python
@@ -19,7 +20,7 @@ import os
 import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data, preprocess_shopify_data, verify_hmac, register_webhooks
+from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks
 from shared.utils import generate_state_token, validate_state_token
 import hmac
 import hashlib
@@ -32,8 +33,7 @@ router = APIRouter()
 async def start_oauth(shop_name: str):
     client_id = os.getenv("SHOPIFY_API_KEY")
     redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
-    # Updated scope to include relevant write permissions for webhook registration
-    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_products,write_orders,write_inventory"
+    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_products,write_inventory"
 
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Shopify app config missing")
@@ -66,14 +66,13 @@ async def oauth_callback(request: Request):
 
     os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"] = token_data["access_token"]
 
-    # Register webhooks for this shop
+    # Register webhooks
     await register_webhooks(shop, token_data["access_token"])
 
-    # Fetch and preprocess initial shop data
+    # Fetch initial shop data
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
-    preprocessed_data = preprocess_shopify_data(shopify_data)
 
-    # Automatically test the webhook
+    # Test webhook
     test_payload = {"product": {"id": 12345, "title": "Test Product"}}
     secret = os.getenv("SHOPIFY_API_SECRET")
     hmac_signature = base64.b64encode(
@@ -91,13 +90,13 @@ async def oauth_callback(request: Request):
             },
             data=json.dumps(test_payload)
         )
-        test_result = response.json() if response.status_code == 200 else {"error": response.text}
-        print(f"Webhook test result for {shop}: {test_result}")
+        webhook_test_result = response.json() if response.status_code == 200 else {"status": "error", "message": response.text}
+        print(f"Webhook test result for {shop}: {webhook_test_result}")
 
     return JSONResponse(content={
         "token_data": token_data,
-        "preprocessed_data": preprocessed_data,
-        "webhook_test": test_result
+        "shopify_data": shopify_data,
+        "webhook_test": webhook_test_result
     })
 
 @router.post("/webhook")
@@ -121,13 +120,8 @@ async def shopify_webhook(request: Request):
     return {"status": "success"}
 ```
 
-**Key Changes**:
-- **Environment Variable**: Updated `WEBHOOK_ADDRESS` to `SHOPIFY_WEBHOOK_ADDRESS` in the prerequisites and comments for consistency.
-
----
-
 ## Step 2: Update `shopify_integration/utils.py`
-Ensure the utility functions support the webhook setup with the new environment variable.
+Configure the utility functions to support webhook registration with non-sensitive topics.
 
 **Updated File: `shopify_integration/utils.py`**
 ```python
@@ -138,7 +132,6 @@ import base64
 import httpx
 from fastapi import HTTPException, Request
 import asyncio
-import json
 
 async def exchange_code_for_token(code: str, shop: str):
     url = f"https://{shop}/admin/oauth/access_token"
@@ -274,8 +267,6 @@ async def register_webhooks(shop: str, access_token: str):
         "products/update",
         "products/delete",
         "inventory_levels/update",
-        "orders/create",
-        "orders/updated",
         "discounts/create",
         "discounts/update",
         "discounts/delete",
@@ -322,28 +313,11 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
             print(f"Failed to register webhook for {topic} at {shop}: {response.text}")
 ```
 
-**Key Changes**:
-- **Environment Variable**: Updated `WEBHOOK_ADDRESS` to `SHOPIFY_WEBHOOK_ADDRESS` in `register_webhooks`.
-
 ---
 
-## Step 3: Configure Environment Variables
-Update your `.env` file to use the new variable name.
+#### Summary
+This subchapter sets up a webhook system focused on non-sensitive data (products, inventory, discounts, collections), integrating HMAC verification, webhook registration, and an automatic test during the OAuth flow.
 
-**Updated `.env` Example**:
-```plaintext
-# Shopify OAuth credentials
-SHOPIFY_API_KEY=your_shopify_api_key
-SHOPIFY_API_SECRET=your_shopify_api_secret
-SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
-SHOPIFY_WEBHOOK_ADDRESS=https://your-app.com/shopify/webhook  # Updated variable name
-```
-
----
-
-## Summary
-This subchapter sets up a secure webhook system with an automatic test during OAuth, using the corrected scope (`write_products`, `write_orders`, `write_inventory`) and renaming `WEBHOOK_ADDRESS` to `SHOPIFY_WEBHOOK_ADDRESS` for clarity.
-
-## Next Steps
-- Proceed to Subchapter 1.2 for testing instructions.
-- Remove the test logic from the callback after initial testing (optional).
+#### Next Steps
+- Proceed to Subchapter 1.2 for polling setup.
+- Verify webhook notifications for stock changes via `inventory_levels/update`.
