@@ -14,7 +14,7 @@ The sales bot requires up-to-date Shopify data to generate accurate recommendati
 - **Scales Efficiently**: Uses cloud storage to handle data for multiple shops, offloading the app.
 - **Optimizes Resources**: Uploads only when data changes, reducing API calls and costs.
 
-We’ll configure environment variables, create utilities for checking data changes and uploading to Spaces, modify the Shopify callback to test webhooks and polling before uploading initial data, enhance the webhook endpoint for incremental updates, and update daily polling to sync data, ensuring uploads only occur after successful tests and when data differs. The existing `generate_state_token` and `validate_state_token` functions from `shared/utils.py` are used in the OAuth flow to secure the callback, so no additional state token logic is needed for Spaces operations.
+We’ll configure environment variables, create utilities for checking data changes and uploading to Spaces, modify the Shopify callback to test webhooks and polling before uploading initial data, enhance the webhook endpoint for incremental updates, and update daily polling to sync data, ensuring uploads only occur after successful tests and when data differs. The existing `generate_state_token` and `validate_state_token` functions from `shared/utils.py` are used in the OAuth flow to secure the callback, so no additional state token logic is needed for Spaces operations. All status fields in the callback response (`webhook_test`, `polling_test`, `upload_status_result`) will use a consistent structure (`{"status": "success"}` or `{"status": "failed", "message": "..."}`) and naming convention (`*_result`).
 
 ---
 
@@ -92,7 +92,7 @@ SPACES_REGION=nyc3
 **Action**: Define functions to compute data hashes, check for data changes, and upload to Spaces.
 
 **Why?**  
-Separating change detection (`has_data_changed`) from uploading (`upload_to_spaces`) enhances modularity, making each function reusable and focused on a single responsibility. Keeping `compute_data_hash` in this module ensures encapsulation, as it’s currently only used by `has_data_changed` for Spaces operations. This aligns with the codebase’s modular design.
+Separating change detection (`has_data_changed`) from uploading (`upload_to_spaces`) enhances modularity, making each function reusable and focused on a single responsibility. Keeping `compute_data_hash` in this module ensures encapsulation, as it’s only used by `has_data_changed` for Spaces operations.
 
 **Instructions**:  
 Create `digitalocean_integration/utils.py` with:
@@ -151,7 +151,7 @@ def upload_to_spaces(data: dict, key: str, s3_client: boto3.client):
 **Action**: Modify the `/shopify/callback` endpoint to test webhook and polling functionality before uploading initial Shopify data to Spaces (if changed), and enhance the `/shopify/webhook` endpoint for incremental updates.
 
 **Why?**  
-The callback, triggered post-OAuth, is ideal for initializing data storage, with `validate_state_token` ensuring security. We’ll verify webhook and polling functionality before uploading, setting `upload_status` to "success" if tests pass and data is either uploaded or unchanged, or "failed" otherwise. The webhook endpoint processes real-time updates, uploading only when data changes. This ensures data integrity and efficiency without additional state token logic for Spaces operations.
+The callback, triggered post-OAuth, is ideal for initializing data storage, with `validate_state_token` ensuring security. We’ll verify webhook and polling functionality before uploading, returning a consistent status structure (`{"status": "success"}` or `{"status": "failed", "message": "..."}`) for `webhook_test`, `polling_test`, and `upload_status_result` with a uniform `*_result` naming convention. The webhook endpoint processes real-time updates, uploading only when data changes. This ensures data integrity, efficiency, and consistent response formatting without additional state token logic for Spaces operations.
 
 **Instructions**:  
 Update `shopify_integration/routes.py` as follows:
@@ -164,7 +164,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, poll_shopify_data
 from shared.utils import generate_state_token, validate_state_token
-from digitalocean_integration.utils import has_data_changed, upload_to_spaces  # Add these imports
+from digitalocean_integration.utils import has_data_changed, upload_to_spaces
 import hmac
 import hashlib
 import base64
@@ -210,18 +210,9 @@ async def oauth_callback(request: Request):
     os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"] = token_data["access_token"]
 
     # Register webhooks
-    webhook_status = "success"
+    webhook_test_result = {"status": "failed", "message": "Webhook registration failed"}
     try:
         await register_webhooks(shop, token_data["access_token"])
-    except Exception as e:
-        webhook_status = "failed"
-        print(f"Webhook registration failed for {shop}: {str(e)}")
-
-    shopify_data = await get_shopify_data(token_data["access_token"], shop)
-
-    # Test webhook
-    webhook_test_result = {"status": "failed", "message": "Webhook test not run"}
-    if webhook_status == "success":
         test_payload = {"product": {"id": 12345, "title": "Test Product"}}
         secret = os.getenv("SHOPIFY_API_SECRET")
         hmac_signature = base64.b64encode(
@@ -244,6 +235,11 @@ async def oauth_callback(request: Request):
                 "message": response.text
             }
         print(f"Webhook test result for {shop}: {webhook_test_result}")
+    except Exception as e:
+        webhook_test_result = {"status": "failed", "message": f"Webhook setup failed: {str(e)}"}
+        print(f"Webhook setup failed for {shop}: {str(e)}")
+
+    shopify_data = await get_shopify_data(token_data["access_token"], shop)
 
     # Test polling
     access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
@@ -252,7 +248,7 @@ async def oauth_callback(request: Request):
     print(f"Polling test result for {shop}: {polling_test_result}")
 
     # Upload to Spaces if webhook and polling tests succeed
-    upload_status = "failed"
+    upload_status_result = {"status": "failed", "message": "Tests failed"}
     if (
         webhook_test_result.get("status") == "success"
         and polling_test_result.get("status") == "success"
@@ -272,18 +268,17 @@ async def oauth_callback(request: Request):
                 print(f"Uploaded data to Spaces for {shop}")
             else:
                 print(f"No upload needed for {shop}: Data unchanged")
-            upload_status = "success"
+            upload_status_result = {"status": "success"}
         except Exception as e:
+            upload_status_result = {"status": "failed", "message": f"Spaces upload failed: {str(e)}"}
             print(f"Failed to upload to Spaces for {shop}: {str(e)}")
-            upload_status = "failed"
 
     return JSONResponse(content={
         "token_data": token_data,
         "shopify_data": shopify_data,
-        "webhook_status": webhook_status,
         "webhook_test": webhook_test_result,
         "polling_test": polling_test_result,
-        "upload_status": upload_status
+        "upload_status_result": upload_status_result
     })
 
 @router.post("/webhook")
@@ -329,9 +324,10 @@ async def shopify_webhook(request: Request):
 
 **Why?**  
 - **Imports**: Includes `has_data_changed` and `upload_to_spaces` from `digitalocean_integration.utils`.
-- **Callback Logic**: Tests webhook and polling functionality, then checks for data changes before uploading, setting `upload_status` to "success" if tests pass and data is either uploaded or unchanged, or "failed" otherwise.
+- **Callback Logic**: Tests webhook and polling functionality, then checks for data changes before uploading. Sets `upload_status_result` to `{"status": "success"}` if tests pass and data is either uploaded or unchanged, or `{"status": "failed", "message": "..."}` otherwise.
+- **Response**: Returns `token_data`, `shopify_data`, `webhook_test`, `polling_test`, and `upload_status_result` with consistent structures and `*_result` naming.
 - **Webhook Condition**: Uses only `webhook_test_result.get("status") == "success"`, ensuring no redundant checks.
-- **Status Consistency**: `upload_status` is "success" when tests pass and data handling completes, aligning with other statuses.
+- **Status Consistency**: All status fields use `{"status": "success"}` or `{"status": "failed", "message": "..."}`.
 - **Webhook Update**: Checks for changes before uploading, logging when updates are skipped.
 - **Error Handling**: Logs failures without interrupting the flow, consistent with the codebase.
 - **S3 Client**: Creates a single client per operation for efficiency.
@@ -341,10 +337,10 @@ async def shopify_webhook(request: Request):
 
 ##### Step 6: Update shopify_integration/utils.py
 
-**Action**: Update the `poll_shopify_data` function to return the fetched Shopify data alongside the status, and update the `daily_poll` function to use this data for Spaces uploads (if changed).
+**Action**: Update the `poll_shopify_data` function to return only a status object, and update the `daily_poll` function to use the fetched Shopify data for Spaces uploads (if changed).
 
 **Why?**  
-Returning the Shopify data from `poll_shopify_data` ensures it’s accessible for change checks and uploads in `daily_poll`, avoiding redundant API calls to `get_shopify_data`. Checking for changes before uploading aligns with the callback’s test-first and efficiency-focused approach.
+Returning only a status from `poll_shopify_data` aligns with the consistent status structure and avoids duplicating `shopify_data` in the `/shopify/callback` response. The `daily_poll` function fetches data separately for Spaces uploads, maintaining efficiency by reusing `poll_shopify_data`.
 
 **Instructions**:  
 Update `shopify_integration/utils.py`, preserving existing functions and updating `poll_shopify_data` and `daily_poll`, with all necessary imports:
@@ -353,9 +349,9 @@ Update `shopify_integration/utils.py`, preserving existing functions and updatin
 import os
 import httpx
 import asyncio
-import hashlib  # Add this import
-import base64  # Add this import
-import hmac    # Add this import
+import hashlib
+import base64
+import hmac
 from fastapi import HTTPException, Request
 import boto3
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
@@ -541,8 +537,8 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
 
 async def poll_shopify_data(access_token: str, shop: str) -> dict:
     try:
-        shopify_data = await get_shopify_data(access_token, shop)
-        return {"status": "success", "data": shopify_data}
+        await get_shopify_data(access_token, shop)
+        return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -560,7 +556,7 @@ async def daily_poll():
             if access_token:
                 poll_result = await poll_shopify_data(access_token, shop)
                 if poll_result["status"] == "success":
-                    shopify_data = poll_result["data"]
+                    shopify_data = await get_shopify_data(access_token, shop)
                     spaces_key = f"{shop}/shopify_data.json"
                     session = boto3.session.Session()
                     s3_client = session.client(
@@ -582,9 +578,9 @@ async def daily_poll():
 ```
 
 **Why?**  
-- **Imports**: Adds `hashlib`, `base64`, `hmac` for `verify_hmac`, plus `boto3`, `has_data_changed`, and `upload_to_spaces` for Spaces operations.
-- **Updated `poll_shopify_data`**: Returns `{"status": "success", "data": shopify_data}` on success, ensuring data access.
-- **Updated `daily_poll`**: Uses `poll_result["data"]`, avoiding redundant `get_shopify_data` calls.
+- **Imports**: Includes `hashlib`, `base64`, `hmac` for `verify_hmac`, and `boto3`, `has_data_changed`, `upload_to_spaces` for Spaces operations.
+- **Updated `poll_shopify_data`**: Returns `{"status": "success"}` or `{"status": "error", "message": "..."}`, omitting `data` to avoid duplication with `shopify_data`.
+- **Updated `daily_poll`**: Fetches `shopify_data` directly via `get_shopify_data` after a successful `poll_result`, as `poll_shopify_data` no longer returns data.
 - **Error Handling**: Checks `poll_result["status"]` and logs failures, allowing the loop to continue.
 - **Logging**: Distinguishes between successful uploads and skipped updates.
 - **Scheduler**: Uses the existing `app.py` scheduler (runs at 00:00 daily).
@@ -616,8 +612,9 @@ boto3
 ##### Summary: Why This Subchapter Matters
 
 - **Data Synchronization**: Integrates Spaces for initial data storage, real-time webhook updates, and daily polling, with uploads contingent on successful tests and data changes.
-- **Efficient Design**: Avoids redundant uploads and API calls by checking for changes and reusing fetched data.
+- **Efficient Design**: Avoids redundant uploads and API calls by checking for changes.
 - **Modular Design**: Adds `digitalocean_integration/utils.py` with Spaces-specific functions (`compute_data_hash`, `has_data_changed`, `upload_to_spaces`) and extends existing modules.
+- **Consistent Response**: Uses uniform status structures (`{"status": "success"}` or `{"status": "failed", "message": "..."}`) and `*_result` naming for `webhook_test`, `polling_test`, and `upload_status_result`.
 - **Bot Readiness**: Ensures the sales bot has up-to-date Shopify data for accurate recommendations.
 
 **Next Steps**:  

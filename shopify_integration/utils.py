@@ -189,8 +189,8 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
 
 async def poll_shopify_data(access_token: str, shop: str) -> dict:
     try:
-        shopify_data = await get_shopify_data(access_token, shop)
-        return {"status": "success", "data": shopify_data}
+        await get_shopify_data(access_token, shop)
+        return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -208,7 +208,7 @@ async def daily_poll():
             if access_token:
                 poll_result = await poll_shopify_data(access_token, shop)
                 if poll_result["status"] == "success":
-                    shopify_data = poll_result["data"]
+                    shopify_data = await get_shopify_data(access_token, shop)
                     spaces_key = f"{shop}/shopify_data.json"
                     session = boto3.session.Session()
                     s3_client = session.client(

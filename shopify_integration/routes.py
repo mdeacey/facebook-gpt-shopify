@@ -50,17 +50,9 @@ async def oauth_callback(request: Request):
 
     os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"] = token_data["access_token"]
 
-    webhook_status = "success"
+    webhook_test_result = {"status": "failed", "message": "Webhook registration failed"}
     try:
         await register_webhooks(shop, token_data["access_token"])
-    except Exception as e:
-        webhook_status = "failed"
-        print(f"Webhook registration failed for {shop}: {str(e)}")
-
-    shopify_data = await get_shopify_data(token_data["access_token"], shop)
-
-    webhook_test_result = {"status": "failed", "message": "Webhook test not run"}
-    if webhook_status == "success":
         test_payload = {"product": {"id": 12345, "title": "Test Product"}}
         secret = os.getenv("SHOPIFY_API_SECRET")
         hmac_signature = base64.b64encode(
@@ -83,13 +75,18 @@ async def oauth_callback(request: Request):
                 "message": response.text
             }
         print(f"Webhook test result for {shop}: {webhook_test_result}")
+    except Exception as e:
+        webhook_test_result = {"status": "failed", "message": f"Webhook setup failed: {str(e)}"}
+        print(f"Webhook setup failed for {shop}: {str(e)}")
+
+    shopify_data = await get_shopify_data(token_data["access_token"], shop)
 
     access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop.replace('.', '_')}"
     access_token = os.getenv(access_token_key)
     polling_test_result = await poll_shopify_data(access_token, shop)
     print(f"Polling test result for {shop}: {polling_test_result}")
 
-    upload_status = "failed"
+    upload_status_result = {"status": "failed", "message": "Tests failed"}
     if (
         webhook_test_result.get("status") == "success"
         and polling_test_result.get("status") == "success"
@@ -109,18 +106,17 @@ async def oauth_callback(request: Request):
                 print(f"Uploaded data to Spaces for {shop}")
             else:
                 print(f"No upload needed for {shop}: Data unchanged")
-            upload_status = "success"
+            upload_status_result = {"status": "success"}
         except Exception as e:
+            upload_status_result = {"status": "failed", "message": f"Spaces upload failed: {str(e)}"}
             print(f"Failed to upload to Spaces for {shop}: {str(e)}")
-            upload_status = "failed"
 
     return JSONResponse(content={
         "token_data": token_data,
         "shopify_data": shopify_data,
-        "webhook_status": webhook_status,
         "webhook_test": webhook_test_result,
         "polling_test": polling_test_result,
-        "upload_status": upload_status
+        "upload_status": upload_status_result
     })
 
 @router.post("/webhook")
