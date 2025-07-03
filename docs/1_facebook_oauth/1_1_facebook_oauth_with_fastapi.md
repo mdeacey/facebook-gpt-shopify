@@ -1,20 +1,20 @@
 # Chapter 1: Facebook Integration
 ## Subchapter 1.1: Facebook OAuth with FastAPI — Secure, Scalable & Modular
 
-This subchapter introduces the FastAPI implementation of Facebook OAuth for a GPT Messenger sales bot, enabling secure authentication to access Facebook Pages and Messenger APIs. We build a modular backend that supports sending product recommendations and promotions via Messenger. The code is designed for scalability, using async programming, environment variables, and stateless CSRF protection via signed state tokens. The OAuth flow retrieves comprehensive, non-sensitive page data while securely storing access tokens server-side. This forms the first part of Chapter 1, followed by creating a Facebook app (Subchapter 1.2) and testing the OAuth flow (Subchapter 1.3).
+This subchapter introduces the FastAPI implementation of Facebook OAuth for a GPT Messenger sales bot, enabling secure authentication to access Facebook Pages and Messenger APIs. We build a modular backend that supports sending product recommendations and promotions via Messenger. The code uses async programming, environment variables, and stateless CSRF protection via signed state tokens. The OAuth flow retrieves comprehensive, non-sensitive page data while securely storing access tokens server-side. This forms the first part of Chapter 1, followed by creating a Facebook app (Subchapter 1.2) and testing the OAuth flow (Subchapter 1.3).
 
 ### Step 1: Project Structure
-To keep the project modular and extensible, we organize it as follows:
+To keep the project modular, we organize it as follows:
 ```
 .
-├── app.py
-├── facebook_oauth/
+573├── app.py
+├── facebook_integration/
 │   ├── __init__.py
 │   ├── routes.py
 │   └── utils.py
 ├── shared/
 │   ├── __init__.py
-│   └── utils.py          # Stateless CSRF helpers
+│   └── utils.py
 ├── .env
 ├── .env.example
 ├── .gitignore
@@ -24,22 +24,22 @@ To keep the project modular and extensible, we organize it as follows:
 ```
 
 **Why?**
-- **Separation of Concerns**: The `facebook_oauth/` module isolates Facebook-specific logic, making it easy to add Shopify integration (Chapter 2).
-- **Shared Logic**: `shared/utils.py` contains reusable CSRF protection code, reducing duplication.
-- **Scalability**: Modular design supports testing, maintenance, and future extensions (e.g., additional APIs).
+- **Separation of Concerns**: The `facebook_integration/` module isolates Facebook-specific logic.
+- **Shared Logic**: `shared/utils.py` provides CSRF protection, reusable for future integrations.
+- **Scalability**: Modular design supports testing and maintenance.
 
 ### Step 2: Create `app.py`
 The main application file initializes FastAPI, sets up CORS, and includes the Facebook OAuth router.
 
 ```python
 from fastapi import FastAPI
-from facebook_oauth.routes import router as facebook_oauth_router
+from facebook_integration.routes import router as facebook_oauth_router
 from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="Facebook and Shopify OAuth with FastAPI")
+app = FastAPI(title="Facebook OAuth with FastAPI")
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,12 +60,12 @@ if __name__ == "__main__":
 ```
 
 **Why?**
-- **FastAPI Setup**: Initializes the app with a descriptive title and loads environment variables via `python-dotenv`.
-- **CORS**: Allows frontend-backend interaction during development, critical for OAuth redirects.
-- **Router**: Mounts the Facebook OAuth routes under `/facebook`, leaving room for Shopify routes (Chapter 2).
-- **Root Endpoint**: Provides a simple health check and usage hint, testable in Subchapter 1.3.
+- **FastAPI Setup**: Initializes the app and loads environment variables.
+- **CORS**: Enables frontend-backend interaction for OAuth redirects.
+- **Router**: Mounts Facebook OAuth routes under `/facebook`.
+- **Root Endpoint**: Guides users to the OAuth endpoint.
 
-### Step 3: Define Facebook OAuth Routes — `facebook_oauth/routes.py`
+### Step 3: Define Facebook OAuth Routes — `facebook_integration/routes.py`
 This module defines two endpoints: `/facebook/login` to start the OAuth flow and `/facebook/callback` to handle the redirect and fetch page data.
 
 ```python
@@ -114,12 +114,14 @@ async def oauth_callback(request: Request):
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
-    # Store user access token for server-side use
     os.environ["FACEBOOK_USER_ACCESS_TOKEN"] = token_data["access_token"]
 
     pages = await get_facebook_data(token_data["access_token"])
 
-    # Prepare response with non-sensitive page details
+    for page in pages.get("data", []):
+        page_id = page["id"]
+        os.environ[f"FACEBOOK_ACCESS_TOKEN_{page_id}"] = page["access_token"]
+
     safe_pages = {
         "data": [
             {k: v for k, v in page.items() if k != "access_token"}
@@ -132,11 +134,11 @@ async def oauth_callback(request: Request):
 ```
 
 **Why?**
-- **Login Endpoint**: Constructs the OAuth URL with `client_id`, `redirect_uri`, and scopes (`pages_messaging`, `pages_show_list`, `pages_manage_metadata`) needed for Messenger integration and webhook subscriptions. The state token prevents CSRF attacks.
-- **Callback Endpoint**: Validates the state token, exchanges the code for a user access token, stores it server-side, and fetches page data. Returns a JSON response with non-sensitive page details (e.g., `id`, `name`, `category`, `about`, `website`, etc.), excluding user and page access tokens for security.
-- **Security**: Stores the user access token in `os.environ` and excludes both user and page access tokens from the response to prevent exposure.
+- **Login Endpoint**: Initiates OAuth with scopes for Messenger and page data, using a state token for CSRF protection.
+- **Callback Endpoint**: Validates the state token, exchanges the code for a user access token, stores it server-side, and returns non-sensitive page data.
+- **Security**: Excludes tokens from the response, storing them in `os.environ`.
 
-### Step 4: Facebook-Specific Helpers — `facebook_oauth/utils.py`
+### Step 4: Facebook-Specific Helpers — `facebook_integration/utils.py`
 This module contains helper functions for token exchange and data retrieval.
 
 ```python
@@ -174,13 +176,13 @@ async def get_facebook_data(access_token: str):
 ```
 
 **Why?**
-- **Token Exchange**: `exchange_code_for_token` securely fetches a user access token using the authorization code and app credentials.
-- **Data Fetching**: `get_facebook_data` retrieves comprehensive page data (e.g., `id`, `name`, `category`, `about`, `website`, `link`, `picture`, `fan_count`, `verification_status`, `location`, `phone`, `email`, `created_time`, `access_token`) needed for Messenger interactions. The `access_token` field is used server-side but excluded from the response.
-- **Error Handling**: Logs detailed API errors for debugging, ensuring issues like invalid tokens or permissions are identifiable.
-- **Async HTTP**: Uses `httpx` for non-blocking requests, aligning with FastAPI’s async nature.
+- **Token Exchange**: Fetches a user access token.
+- **Data Fetching**: Retrieves non-sensitive page data for Messenger interactions.
+- **Error Handling**: Logs API errors.
+- **Async HTTP**: Uses `httpx` for non-blocking requests.
 
 ### Step 5: Stateless CSRF Protection — `shared/utils.py`
-This module provides reusable CSRF protection, used by both Facebook and Shopify OAuth flows.
+This module provides reusable CSRF protection.
 
 ```python
 import os
@@ -227,34 +229,31 @@ def validate_state_token(state_token: str, max_age: int = 300):
 ```
 
 **Why?**
-- **CSRF Protection**: Generates and validates signed state tokens to prevent cross-site request forgery during OAuth redirects.
-- **Stateless**: Stores no session data, improving scalability.
-- **Reusable**: Shared across Facebook (this subchapter) and Shopify (Chapter 2) OAuth flows.
+- **CSRF Protection**: Generates and validates state tokens.
+- **Stateless**: Enhances scalability.
+- **Reusable**: Supports future integrations.
 
 ### Step 6: Environment Variables — `.env.example`
-Define environment variables for Facebook OAuth, with placeholders for Shopify variables (added in Chapter 2).
+Define environment variables for Facebook OAuth.
 
 ```plaintext
 # Facebook OAuth credentials
 FACEBOOK_APP_ID=your_app_id
 FACEBOOK_APP_SECRET=your_app_secret
 FACEBOOK_REDIRECT_URI=http://localhost:5000/facebook/callback
-
 # For GitHub Codespaces
 # FACEBOOK_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/facebook/callback
-
 # Shared secret for state token CSRF protection
 STATE_TOKEN_SECRET=replace_with_secure_token
 ```
 
 **Why?**
-- **Credentials**: `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` are obtained in Subchapter 1.2, authenticating the OAuth flow.
-- **Redirect URI**: Matches the callback endpoint, configurable for local or Codespaces environments.
-- **CSRF Secret**: A secure token (generate via `python -c "import secrets; print(secrets.token_urlsafe(32))"`) ensures state token integrity.
-- **Security**: Storing variables in `.env` (not committed, per `.gitignore`) prevents credential exposure.
+- **Credentials**: Authenticate the OAuth flow.
+- **Redirect URI**: Matches the callback endpoint.
+- **CSRF Secret**: Ensures state token integrity.
 
 ### Step 7: Dependencies — `requirements.txt`
-List the required Python packages.
+List required Python packages.
 
 ```plaintext
 fastapi
@@ -264,9 +263,9 @@ python-dotenv
 ```
 
 **Why?**
-- **FastAPI & Uvicorn**: Core framework and server for running the app.
-- **HTTPX**: Handles async HTTP requests for OAuth and API calls.
-- **python-dotenv**: Loads `.env` variables, simplifying configuration.
+- **FastAPI & Uvicorn**: Core framework and server.
+- **HTTPX**: Handles async HTTP requests.
+- **python-dotenv**: Loads `.env` variables.
 
 ### Step 8: Git Ignore — `.gitignore`
 Prevent sensitive files from being committed.
@@ -279,25 +278,23 @@ __pycache__/
 ```
 
 **Why?**
-- Excludes compiled Python files, the `.env` file (containing secrets), and macOS-specific files, ensuring a clean repository.
+- Excludes compiled files, `.env`, and macOS-specific files.
 
 ### Step 9: Testing Preparation
-To verify this implementation:
-- Create a `.env` file based on `.env.example`, filling in `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` (obtained in Subchapter 1.2).
+To verify:
+- Create a `.env` file with `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, and `STATE_TOKEN_SECRET` (Subchapter 1.2).
 - Install dependencies: `pip install -r requirements.txt`.
 - Run the app: `python app.py`.
-- Access `http://localhost:5000` to see the root response: `{"status": "ok", "message": "Use /facebook/login for OAuth"}`.
+- Access `http://localhost:5000` to confirm the root response.
 
-Detailed testing, including the OAuth flow, is covered in Subchapter 1.3.
+Testing is covered in Subchapter 1.3.
 
 ### Summary: Why This Subchapter Matters
-- **Foundation for Messenger Integration**: Implements secure Facebook OAuth, enabling access to Pages and Messenger APIs for the sales bot.
-- **Modular Design**: Organizes code into reusable modules (`facebook_oauth`, `shared`), preparing for Shopify integration (Chapter 2).
-- **Security**: Uses environment variables, CSRF protection, and input validation, excluding sensitive tokens from responses for enhanced security.
-- **Scalability**: Async programming and stateless design support high traffic and future extensions.
-- **Comprehensive Data**: Retrieves extensive non-sensitive page data (e.g., `id`, `name`, `category`, `about`, `website`) for use in the sales bot.
+- **Foundation for Messenger Integration**: Implements secure Facebook OAuth.
+- **Modular Design**: Organizes code for reusability.
+- **Security**: Uses environment variables and CSRF protection, excluding sensitive tokens.
+- **Scalability**: Async programming supports high traffic.
 
 ### Next Steps:
-- Create a Facebook app to obtain credentials (Subchapter 1.2).
-- Test the OAuth flow to verify authentication and page data retrieval (Subchapter 1.3).
-- Proceed to Shopify integration (Chapter 2) for product data.
+- Create a Facebook app (Subchapter 1.2).
+- Test the OAuth flow (Subchapter 1.3).

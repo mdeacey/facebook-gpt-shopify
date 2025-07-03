@@ -1,51 +1,93 @@
-# Chapter 2: Facebook Data Sync
-## Subchapter 2.1: Setting Up Facebook Webhooks for Real-Time Updates
+# Chapter 4: Facebook Data Sync
+## Subchapter 4.1: Setting Up Facebook Webhooks for Real-Time Updates
 
 ### Introduction
-Facebook webhooks enable your application to receive real-time notifications about page events, such as changes to page name, category, or other metadata, to keep your GPT Messenger sales bot’s data up-to-date. This subchapter guides you through setting up a secure webhook endpoint in your FastAPI application, integrating HMAC verification, registering webhooks during the OAuth flow with appropriate permissions, and including an automatic test to verify functionality. The webhook system focuses on non-sensitive metadata, ensuring secure data handling without exposing access tokens.
+Facebook webhooks enable real-time notifications for page events (e.g., changes to page name or category) to keep the GPT Messenger sales bot’s data up-to-date. This subchapter sets up a secure webhook endpoint in the FastAPI application, integrating HMAC verification and registering webhooks during the OAuth flow with appropriate permissions (`pages_show_list`, `pages_manage_metadata`). The webhook system uses the UUID from the session-based mechanism (Chapter 3) to identify the user and temporarily stores data in a file-based structure (`facebook/<page_id>/page_data.json`), preparing for cloud storage in a later chapter. The focus is on non-sensitive metadata, ensuring secure data handling without exposing access tokens.
 
 ### Prerequisites
-- Completed Facebook OAuth setup from Chapter 1.
-- Your FastAPI application is running locally or in a production-like environment.
-- Required permissions: `pages_show_list` and `pages_manage_metadata` for webhook subscriptions.
-- `apscheduler` is installed (`pip install apscheduler`).
+- Completed Chapters 1–3 (Facebook OAuth, Shopify OAuth, UUID/session management).
+- FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment (e.g., GitHub Codespaces).
+- Facebook API credentials (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_REDIRECT_URI`) set in `.env` (Chapter 1).
+- A `session_id` cookie set by Shopify OAuth (Chapter 3) to retrieve the UUID.
+- A publicly accessible webhook URL for testing (e.g., via ngrok).
 
 ---
 
 ### Step 1: Configure Environment Variables
-Ensure your `.env` file includes Facebook-specific variables required for webhook functionality.
+Update the `.env` file to include webhook-specific variables for Facebook, in addition to the OAuth credentials from Chapters 1 and 2.
 
-**Updated `.env` Example**:
+**Updated `.env.example`**:
 ```plaintext
 # Facebook OAuth credentials
 FACEBOOK_APP_ID=your_facebook_app_id
 FACEBOOK_APP_SECRET=your_facebook_app_secret
 FACEBOOK_REDIRECT_URI=http://localhost:5000/facebook/callback
+# For GitHub Codespaces
+# FACEBOOK_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/facebook/callback
+# Webhook configuration
 FACEBOOK_WEBHOOK_ADDRESS=https://your-app.com/facebook/webhook
 FACEBOOK_VERIFY_TOKEN=your_verify_token
+# Shopify OAuth credentials
+SHOPIFY_API_KEY=your_shopify_api_key
+SHOPIFY_API_SECRET=your_shopify_api_secret
+SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
+# For GitHub Codespaces
+# SHOPIFY_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/shopify/callback
 # Shared secret for state token CSRF protection
 STATE_TOKEN_SECRET=replace_with_secure_token
 ```
 
 **Notes**:
-- Replace placeholders (e.g., `your_facebook_app_id`) with actual values from your Facebook Developer App (Subchapter 1.2).
-- `FACEBOOK_WEBHOOK_ADDRESS` must be a publicly accessible URL in production (e.g., via ngrok for testing).
-- `FACEBOOK_VERIFY_TOKEN` is a custom string you define for webhook verification (generate via `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
-- `STATE_TOKEN_SECRET` is used for CSRF protection, as set in Subchapter 1.1.
+- Replace placeholders with values from your Facebook Developer App (Subchapter 1.2).
+- `FACEBOOK_WEBHOOK_ADDRESS` must be publicly accessible (e.g., use ngrok for local testing: `ngrok http 5000`).
+- `FACEBOOK_VERIFY_TOKEN` is a custom string for webhook verification (generate via `python -c "import secrets; print(secrets.token_urlsafe(32))"`).
+- **Production Note**: Ensure `STATE_TOKEN_SECRET` is secure and unique, and use HTTPS for `FACEBOOK_WEBHOOK_ADDRESS`.
 
 **Why?**
-- These variables authenticate the OAuth flow, secure webhook verification, and ensure CSRF protection, aligning with the secure setup from Chapter 1.
+- Authenticates the OAuth flow and secures webhook verification.
+- Prepares for webhook registration and event processing.
 
-### Step 2: Update `facebook_oauth/utils.py`
-Add utility functions to support webhook registration and verification for Facebook page events, subscribing to `name` and `category` fields to capture relevant page metadata.
+### Step 2: Update Project Structure
+The project structure builds on Chapters 1–3, including `shared/session.py` for session-based UUID retrieval:
+```
+.
+├── app.py
+├── facebook_integration/
+│   ├── __init__.py
+│   ├── routes.py
+│   └── utils.py
+├── shopify_integration/
+│   ├── __init__.py
+│   ├── routes.py
+│   └── utils.py
+├── shared/
+│   ├── __init__.py
+│   ├── session.py
+│   └── utils.py
+├── .env
+├── .env.example
+├── .gitignore
+├── LICENSE
+├── README.md
+└── requirements.txt
+```
 
-**Updated File: `facebook_oauth/utils.py`**
+**Why?**
+- `facebook_integration/` contains webhook routes and utilities.
+- `shared/session.py` manages session IDs for UUID retrieval, supporting multiple users.
+- `shared/utils.py` provides CSRF protection with UUID support from Chapter 3.
+- Modular design supports future integrations.
+
+### Step 3: Update `facebook_integration/utils.py`
+Add utility functions for webhook verification and registration, building on the OAuth functions from Chapter 1.
+
 ```python
 import os
 import httpx
 import hmac
 import hashlib
 from fastapi import HTTPException, Request
+import json
 
 async def exchange_code_for_token(code: str):
     url = "https://graph.facebook.com/v19.0/oauth/access_token"
@@ -76,30 +118,19 @@ async def get_facebook_data(access_token: str):
         return response.json()
 
 async def verify_webhook(request: Request) -> bool:
-    """
-    Verifies the HMAC signature of incoming Facebook webhook requests.
-    """
     signature = request.headers.get("X-Hub-Signature")
     if not signature:
         return False
-
     body = await request.body()
     secret = os.getenv("FACEBOOK_APP_SECRET")
-    expected_hmac = hmac.new(
-        secret.encode(), body, hashlib.sha1
-    ).hexdigest()
+    expected_hmac = hmac.new(secret.encode(), body, hashlib.sha1).hexdigest()
     expected_signature = f"sha1={expected_hmac}"
-
     return hmac.compare_digest(signature, expected_signature)
 
 async def register_webhooks(page_id: str, access_token: str):
-    """
-    Registers webhooks for a specific Facebook page.
-    """
     webhook_address = os.getenv("FACEBOOK_WEBHOOK_ADDRESS")
     if not webhook_address:
         raise HTTPException(status_code=500, detail="FACEBOOK_WEBHOOK_ADDRESS not set")
-
     url = f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps"
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
@@ -115,9 +146,6 @@ async def register_webhooks(page_id: str, access_token: str):
             print(f"Failed to register webhook for page {page_id}: {response.text}")
 
 async def get_existing_subscriptions(page_id: str, access_token: str):
-    """
-    Retrieves existing webhook subscriptions for a page.
-    """
     url = f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps"
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient() as client:
@@ -126,17 +154,14 @@ async def get_existing_subscriptions(page_id: str, access_token: str):
 ```
 
 **Why?**
-- **Token Exchange**: `exchange_code_for_token` fetches the user access token for OAuth, used in the callback.
-- **Data Fetching**: `get_facebook_data` retrieves comprehensive non-sensitive page data (`id`, `name`, `category`, `about`, etc.) and the page access token (for server-side use).
-- **Webhook Verification**: `verify_webhook` ensures incoming webhook requests are authentic using HMAC signatures.
-- **Webhook Registration**: `register_webhooks` subscribes to `name,category` events, requiring `pages_manage_metadata`.
-- **Subscription Check**: `get_existing_subscriptions` prevents duplicate webhook registrations.
-- **Security**: Excludes sensitive tokens from responses, with error logging for debugging.
+- **Token Exchange and Data Fetching**: Reuses OAuth functions from Chapter 1.
+- **Webhook Verification**: Validates incoming webhook events with HMAC.
+- **Webhook Registration**: Subscribes to `name,category` events during OAuth.
+- **Existing Subscriptions**: Prevents duplicate subscriptions.
 
-### Step 3: Update `facebook_oauth/routes.py`
-Configure the webhook endpoint, OAuth flow, and integrated test for webhooks, ensuring a secure response without tokens.
+### Step 4: Update `facebook_integration/routes.py`
+Update the OAuth flow to register webhooks and add a webhook endpoint, using the UUID from the session to store data temporarily.
 
-**Updated File: `facebook_oauth/routes.py`**
 ```python
 import os
 import re
@@ -147,12 +172,13 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions
 from shared.utils import generate_state_token, validate_state_token
+from shared.session import get_uuid, clear_session
 import httpx
 
 router = APIRouter()
 
 @router.get("/login")
-async def start_oauth():
+async def start_oauth(request: Request):
     client_id = os.getenv("FACEBOOK_APP_ID")
     redirect_uri = os.getenv("FACEBOOK_REDIRECT_URI")
     scope = "pages_messaging,pages_show_list,pages_manage_metadata"
@@ -163,7 +189,14 @@ async def start_oauth():
     if not re.match(r'^\d{15,20}$', client_id):
         raise HTTPException(status_code=500, detail="Invalid FACEBOOK_APP_ID format")
 
-    state = generate_state_token()
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Missing session_id cookie")
+    user_uuid = get_uuid(session_id)
+    if not user_uuid:
+        raise HTTPException(status_code=400, detail="Invalid or expired session")
+
+    state = generate_state_token(extra_data=user_uuid)
 
     auth_url = (
         f"https://www.facebook.com/v19.0/dialog/oauth?"
@@ -174,37 +207,46 @@ async def start_oauth():
 @router.get("/callback")
 async def oauth_callback(request: Request):
     code = request.query_params.get("code")
-    incoming_state = request.query_params.get("state")
+    state = request.query_params.get("state")
 
     if not code:
         raise HTTPException(status_code=400, detail="Missing code parameter")
-    if not incoming_state:
+    if not state:
         raise HTTPException(status_code=400, detail="Missing state parameter")
 
-    validate_state_token(incoming_state)
+    user_uuid = validate_state_token(state)
+    if not user_uuid:
+        raise HTTPException(status_code=400, detail="Invalid UUID in state token")
+
+    session_id = request.cookies.get("session_id")
+    if session_id:
+        clear_session(session_id)
 
     token_data = await exchange_code_for_token(code)
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
-    # Store user access token for server-side use
     os.environ["FACEBOOK_USER_ACCESS_TOKEN"] = token_data["access_token"]
 
     pages = await get_facebook_data(token_data["access_token"])
 
-    # Store page access tokens and register webhooks
     for page in pages.get("data", []):
         page_id = page["id"]
         os.environ[f"FACEBOOK_ACCESS_TOKEN_{page_id}"] = page["access_token"]
+        os.environ[f"PAGE_UUID_{page_id}"] = user_uuid
 
-        # Register webhooks if not already subscribed
         existing_subscriptions = await get_existing_subscriptions(page_id, page["access_token"])
         if not any("name" in sub.get("subscribed_fields", []) for sub in existing_subscriptions):
             await register_webhooks(page_id, page["access_token"])
         else:
             print(f"Webhook subscription for 'name,category' already exists for page {page_id}")
 
-    # Test webhook
+        # Temporary file storage
+        os.makedirs(f"facebook/{page_id}", exist_ok=True)
+        with open(f"facebook/{page_id}/page_data.json", "w") as f:
+            json.dump(pages, f)
+        print(f"Wrote data to facebook/{page_id}/page_data.json for page {page_id}")
+
     test_payload = {"object": "page", "entry": [{"id": "test_page_id", "changes": [{"field": "name", "value": "Test Page"}]}]}
     secret = os.getenv("FACEBOOK_APP_SECRET")
     hmac_signature = f"sha1={hmac.new(secret.encode(), json.dumps(test_payload).encode(), hashlib.sha1).hexdigest()}"
@@ -221,7 +263,6 @@ async def oauth_callback(request: Request):
         webhook_test_result = response.json() if response.status_code == 200 else {"status": "error", "message": response.text}
         print(f"Webhook test result: {webhook_test_result}")
 
-    # Prepare response with non-sensitive page details
     safe_pages = {
         "data": [
             {k: v for k, v in page.items() if k != "access_token"}
@@ -231,6 +272,7 @@ async def oauth_callback(request: Request):
     }
 
     return JSONResponse(content={
+        "user_uuid": user_uuid,
         "pages": safe_pages,
         "webhook_test": webhook_test_result
     })
@@ -255,15 +297,26 @@ async def facebook_webhook(request: Request):
             print(f"Access token not found for page {page_id}")
             continue
 
+        user_uuid = os.getenv(f"PAGE_UUID_{page_id}")
+        if not user_uuid:
+            print(f"User UUID not found for page {page_id}")
+            continue
+
         print(f"Received webhook event for page {page_id}: {entry}")
+
+        try:
+            page_data = await get_facebook_data(access_token)
+            os.makedirs(f"facebook/{page_id}", exist_ok=True)
+            with open(f"facebook/{page_id}/page_data.json", "w") as f:
+                json.dump(page_data, f)
+            print(f"Wrote data to facebook/{page_id}/page_data.json for page {page_id}")
+        except Exception as e:
+            print(f"Failed to write data for page {page_id}: {str(e)}")
 
     return {"status": "success"}
 
 @router.get("/webhook")
 async def verify_webhook_subscription(request: Request):
-    """
-    Verifies the webhook subscription with Facebook.
-    """
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
@@ -274,48 +327,60 @@ async def verify_webhook_subscription(request: Request):
 ```
 
 **Why?**
-- **Login Endpoint**: Initiates OAuth with required scopes, including `pages_manage_metadata` for webhooks.
-- **Callback Endpoint**: Stores user and page access tokens server-side, registers webhooks, tests the webhook endpoint, and returns non-sensitive page data (`id`, `name`, `category`, `about`, etc.) with a `webhook_test` result.
-- **Webhook Endpoint**: Processes incoming events for `name` and `category` changes, using HMAC verification for security.
-- **Verification Endpoint**: Handles Facebook’s webhook subscription handshake using `FACEBOOK_VERIFY_TOKEN`.
-- **Security**: Excludes all tokens from the response, storing them in `os.environ` for internal use.
+- **Login Endpoint**: Retrieves the UUID from the `session_id` cookie (Chapter 3), passing it via the state token.
+- **Callback Endpoint**: Registers webhooks, tests the webhook endpoint, stores data in `facebook/<page_id>/page_data.json`, and returns non-sensitive page data with `user_uuid` and `webhook_test`.
+- **Webhook Endpoint**: Processes `name,category` events, storing updates in `facebook/<page_id>/page_data.json` using the UUID.
+- **Security**: Excludes tokens from responses, uses HMAC verification, and clears sessions.
 
-### Step 4: Configure Webhook in Facebook Developer Portal
-**Action**: Set up the webhook in the Meta Developer Portal to receive page events.
-1. Log into `developers.facebook.com` and navigate to your app (created in Subchapter 1.2).
-2. In the left sidebar, under “Products”, add “Webhooks” (click “Add Product” if not already added).
+### Step 5: Configure Webhook in Facebook Developer Portal
+**Action**: Set up the webhook in the Meta Developer Portal:
+1. Log into `developers.facebook.com` and navigate to your app (Subchapter 1.2).
+2. Add “Webhooks” under “Products” (click “Add Product” if not added).
 3. Select “Page” as the webhook object.
-4. In the “Webhooks” settings, click “Add Callback URL” and enter:
-   - **Callback URL**: Your `FACEBOOK_WEBHOOK_ADDRESS` from `.env` (e.g., `https://your-app.com/facebook/webhook` or `http://localhost:5000/facebook/webhook` via ngrok for testing).
-   - **Verify Token**: Your `FACEBOOK_VERIFY_TOKEN` from `.env`.
+4. Click “Add Callback URL” and enter:
+   - **Callback URL**: `FACEBOOK_WEBHOOK_ADDRESS` (e.g., `https://your-app.com/facebook/webhook` or `http://localhost:5000/facebook/webhook` via ngrok).
+   - **Verify Token**: `FACEBOOK_VERIFY_TOKEN` from `.env`.
 5. Click “Verify and Save”.
 6. Subscribe to `name` and `category` fields under “Page Subscriptions”.
 
-**Expected Output**: The portal confirms the webhook is verified, and your app starts receiving events for the specified fields.
+**Expected Output**: The portal confirms webhook verification.
 
 **Screenshot Reference**: Webhooks settings page showing the “Page” webhook, Callback URL, and Verify Token fields.
 **Why?**
-- Configures Facebook to send real-time events to your `/facebook/webhook` endpoint.
-- The `pages_manage_metadata` permission (from Subchapter 1.1) allows subscribing to `name,category`.
-- Using ngrok for local testing ensures the webhook URL is publicly accessible.
+- Configures Facebook to send real-time events to `/facebook/webhook`.
+- Requires `pages_manage_metadata` permission.
+- Ngrok ensures local testing accessibility.
 
-### Step 5: Testing Preparation
+### Step 6: Update `requirements.txt`
+Ensure dependencies support webhooks.
+
+```plaintext
+fastapi
+uvicorn
+httpx
+python-dotenv
+```
+
+**Why?**
+- No additional dependencies needed beyond Chapters 1–3.
+- `httpx` supports async webhook requests.
+
+### Step 7: Testing Preparation
 To verify the webhook setup:
-1. Update your `.env` file with `FACEBOOK_WEBHOOK_ADDRESS` and `FACEBOOK_VERIFY_TOKEN`.
-2. Install dependencies: `pip install -r requirements.txt` (including `apscheduler` for later subchapters).
+1. Update `.env` with `FACEBOOK_WEBHOOK_ADDRESS` and `FACEBOOK_VERIFY_TOKEN`.
+2. Install dependencies: `pip install -r requirements.txt`.
 3. Run the app: `python app.py`.
-4. Initiate the OAuth flow via `http://localhost:5000/facebook/login` (or Codespaces URL).
-5. After authorization, check the `/facebook/callback` response for `webhook_test: {"status": "success"}` and non-sensitive page data.
-
-Detailed testing is covered in Subchapter 2.3.
+4. Complete Shopify OAuth (Chapter 2) to set the `session_id` cookie.
+5. Run the Facebook OAuth flow (Chapter 1) to test webhook registration.
+6. Testing details are in Subchapter 4.3.
 
 ### Summary: Why This Subchapter Matters
-- **Real-Time Updates**: Webhooks enable instant notifications for page metadata changes, keeping the sales bot’s data current.
-- **Secure Design**: HMAC verification and CSRF protection ensure robust security, with tokens stored server-side.
-- **Modular Code**: Reuses `shared/utils.py` for CSRF and adds webhook-specific utilities in `facebook_oauth/utils.py`.
-- **Comprehensive Data**: Captures extensive non-sensitive page data for bot interactions.
-- **Test Integration**: Automatic webhook testing during OAuth confirms functionality.
+- **Real-Time Updates**: Webhooks keep page metadata current for the sales bot.
+- **Security**: HMAC verification and session-based UUID retrieval ensure secure, multi-user operation.
+- **UUID Integration**: Links data using the UUID from Chapter 3.
+- **Scalability**: Async processing supports high traffic.
+- **Temporary Storage**: Prepares for cloud storage in a later chapter.
 
 ### Next Steps:
-- Proceed to Subchapter 2.2 for polling setup to complement webhooks.
-- Verify webhook notifications for page metadata changes via the `name` and `category` fields in Subchapter 2.3.
+- Implement daily polling for redundancy (Subchapter 4.2).
+- Test webhooks and polling (Subchapter 4.3).

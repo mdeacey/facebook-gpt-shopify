@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions, poll_facebook_data
 from shared.utils import generate_state_token, validate_state_token
+from shared.session import get_uuid, clear_session
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
 import boto3
 import httpx
@@ -14,7 +15,7 @@ import httpx
 router = APIRouter()
 
 @router.get("/login")
-async def start_oauth(uuid: str):
+async def start_oauth(request: Request):
     client_id = os.getenv("FACEBOOK_APP_ID")
     redirect_uri = os.getenv("FACEBOOK_REDIRECT_URI")
     scope = "pages_messaging,pages_show_list,pages_manage_metadata"
@@ -25,13 +26,19 @@ async def start_oauth(uuid: str):
     if not re.match(r'^\d{15,20}$', client_id):
         raise HTTPException(status_code=500, detail="Invalid FACEBOOK_APP_ID format")
 
-    state = generate_state_token(extra_data=uuid)
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Missing session_id cookie")
+    user_uuid = get_uuid(session_id)
+    if not user_uuid:
+        raise HTTPException(status_code=400, detail="Invalid or expired session")
+
+    state = generate_state_token(extra_data=user_uuid)
 
     auth_url = (
         f"https://www.facebook.com/v19.0/dialog/oauth?"
         f"client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}&response_type=code&state={state}"
     )
-
     return RedirectResponse(auth_url)
 
 @router.get("/callback")
@@ -47,6 +54,10 @@ async def oauth_callback(request: Request):
     user_uuid = validate_state_token(incoming_state)
     if not user_uuid:
         raise HTTPException(status_code=400, detail="Invalid UUID in state token")
+
+    session_id = request.cookies.get("session_id")
+    if session_id:
+        clear_session(session_id)
 
     token_data = await exchange_code_for_token(code)
     if "access_token" not in token_data:
@@ -68,7 +79,7 @@ async def oauth_callback(request: Request):
     for page in pages.get("data", []):
         page_id = page["id"]
         os.environ[f"FACEBOOK_ACCESS_TOKEN_{page_id}"] = page["access_token"]
-        os.environ[f"PAGE_UUID_{page_id}"] = user_uuid  # Map page to UUID
+        os.environ[f"PAGE_UUID_{page_id}"] = user_uuid
 
         existing_subscriptions = await get_existing_subscriptions(page_id, page["access_token"])
         if not any("name" in sub.get("subscribed_fields", []) for sub in existing_subscriptions):

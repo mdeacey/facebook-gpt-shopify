@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, poll_shopify_data
 from shared.utils import generate_state_token, validate_state_token
+from shared.session import generate_session_id, store_uuid
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
 import hmac
 import hashlib
@@ -54,6 +55,9 @@ async def oauth_callback(request: Request):
 
     user_uuid = str(uuid.uuid4())
     os.environ[f"USER_UUID_{shop_key}"] = user_uuid
+
+    session_id = generate_session_id()
+    store_uuid(session_id, user_uuid)
 
     webhook_test_result = {"status": "failed", "message": "Webhook registration failed"}
     try:
@@ -116,7 +120,7 @@ async def oauth_callback(request: Request):
             upload_status_result = {"status": "failed", "message": f"Spaces upload failed: {str(e)}"}
             print(f"Failed to upload to Spaces for {shop}: {str(e)}")
 
-    return JSONResponse(content={
+    response = JSONResponse(content={
         "user_uuid": user_uuid,
         "token_data": token_data,
         "shopify_data": shopify_data,
@@ -124,6 +128,8 @@ async def oauth_callback(request: Request):
         "polling_test": polling_test_result,
         "upload_status": upload_status_result
     })
+    response.set_cookie(key="session_id", value=session_id, httponly=True, max_age=3600)
+    return response
 
 @router.post("/webhook")
 async def shopify_webhook(request: Request):
