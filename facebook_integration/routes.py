@@ -5,10 +5,8 @@ import hmac
 import hashlib
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions
+from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions, poll_facebook_data
 from shared.utils import generate_state_token, validate_state_token
-from digitalocean_integration.utils import has_data_changed, upload_to_spaces
-import boto3
 import httpx
 
 router = APIRouter()
@@ -52,14 +50,6 @@ async def oauth_callback(request: Request):
 
     pages = await get_facebook_data(token_data["access_token"])
 
-    session = boto3.session.Session()
-    s3_client = session.client(
-        "s3",
-        region_name=os.getenv("SPACES_REGION", "nyc3"),
-        endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-        aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
-        aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
-    )
     for page in pages.get("data", []):
         page_id = page["id"]
         os.environ[f"FACEBOOK_ACCESS_TOKEN_{page_id}"] = page["access_token"]
@@ -69,13 +59,6 @@ async def oauth_callback(request: Request):
             await register_webhooks(page_id, page["access_token"])
         else:
             print(f"Webhook subscription for 'name,description,category' already exists for page {page_id}")
-
-        spaces_key = f"facebook/{page_id}/page_data.json"
-        if has_data_changed(pages, spaces_key, s3_client):
-            upload_to_spaces(pages, spaces_key, s3_client)
-            print(f"Uploaded initial data to Spaces for page {page_id}")
-        else:
-            print(f"No upload needed for page {page_id}: Data unchanged")
 
     test_payload = {"object": "page", "entry": [{"id": "test_page_id", "changes": [{"field": "name", "value": "Test Page"}]}]}
     secret = os.getenv("FACEBOOK_APP_SECRET")
@@ -93,10 +76,19 @@ async def oauth_callback(request: Request):
         webhook_test_result = response.json() if response.status_code == 200 else {"status": "error", "message": response.text}
         print(f"Webhook test result: {webhook_test_result}")
 
+    polling_test_results = []
+    for page in pages.get("data", []):
+        page_id = page["id"]
+        access_token = os.getenv(f"FACEBOOK_ACCESS_TOKEN_{page_id}")
+        polling_result = await poll_facebook_data(access_token, page_id)
+        polling_test_results.append({"page_id": page_id, "result": polling_result})
+        print(f"Polling test result for page {page_id}: {polling_result}")
+
     return JSONResponse(content={
         "token_data": token_data,
         "pages": pages,
-        "webhook_test": webhook_test_result
+        "webhook_test": webhook_test_result,
+        "polling_test": polling_test_results
     })
 
 @router.post("/webhook")
@@ -107,15 +99,6 @@ async def facebook_webhook(request: Request):
     payload = await request.json()
     if payload.get("object") != "page":
         raise HTTPException(status_code=400, detail="Invalid webhook object")
-
-    session = boto3.session.Session()
-    s3_client = session.client(
-        "s3",
-        region_name=os.getenv("SPACES_REGION", "nyc3"),
-        endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-        aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
-        aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
-    )
 
     for entry in payload.get("entry", []):
         page_id = entry.get("id")
@@ -130,24 +113,10 @@ async def facebook_webhook(request: Request):
 
         print(f"Received webhook event for page {page_id}: {entry}")
 
-        try:
-            page_data = await get_facebook_data(access_token)
-            spaces_key = f"facebook/{page_id}/page_data.json"
-            if has_data_changed(page_data, spaces_key, s3_client):
-                upload_to_spaces(page_data, spaces_key, s3_client)
-                print(f"Updated data in Spaces for page {page_id}")
-            else:
-                print(f"No update needed in Spaces for page {page_id}: Data unchanged")
-        except Exception as e:
-            print(f"Failed to update Spaces for page {page_id}: {str(e)}")
-
     return {"status": "success"}
 
 @router.get("/webhook")
 async def verify_webhook_subscription(request: Request):
-    """
-    Verifies the webhook subscription with Facebook.
-    """
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")

@@ -67,3 +67,30 @@ async def get_existing_subscriptions(page_id: str, access_token: str):
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers)
         return response.json().get("data", [])
+
+async def poll_facebook_data(access_token: str, page_id: str) -> dict:
+    try:
+        await get_facebook_data(access_token)
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+async def daily_poll():
+    page_ids = [
+        key.replace("FACEBOOK_ACCESS_TOKEN_", "")
+        for key in os.environ
+        if key.startswith("FACEBOOK_ACCESS_TOKEN_")
+    ]
+
+    for page_id in page_ids:
+        try:
+            access_token_key = f"FACEBOOK_ACCESS_TOKEN_{page_id}"
+            access_token = os.getenv(access_token_key)
+            if access_token:
+                result = await poll_facebook_data(access_token, page_id)
+                if result["status"] == "success":
+                    print(f"Polled data for page {page_id}: Success")
+                else:
+                    print(f"Polling failed for page {page_id}: {result['message']}")
+        except Exception as e:
+            print(f"Daily poll failed for page {page_id}: {str(e)}")

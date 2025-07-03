@@ -5,7 +5,8 @@ from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from shopify_integration.utils import daily_poll
+from shopify_integration.utils import daily_poll as shopify_daily_poll
+from facebook_integration.utils import daily_poll as facebook_daily_poll
 import atexit
 
 load_dotenv()
@@ -27,7 +28,8 @@ async def root():
     return {"status": "ok"}
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(daily_poll, CronTrigger(hour=0, minute=0))
+scheduler.add_job(shopify_daily_poll, CronTrigger(hour=0, minute=0))
+scheduler.add_job(facebook_daily_poll, CronTrigger(hour=0, minute=0))
 scheduler.start()
 
 atexit.register(lambda: scheduler.shutdown())
