@@ -1,47 +1,32 @@
 #!/bin/bash
 
-if [ -f /app/.env ]; then
-    set -a
-    . /app/.env
-    set +a
-else
-    echo "Error: /app/.env not found" >&2
+source /app/.env
+
+if [ -z "$SPACES_API_KEY" ] || [ -z "$SPACES_API_SECRET" ] || [ -z "$SPACES_REGION" ] || [ -z "$SPACES_BUCKET" ] || [ -z "$SPACES_ENDPOINT" ]; then
+    echo "Error: Missing required environment variables for Spaces"
     exit 1
 fi
 
+DATE=$(date +%Y-%m-%d)
+DB_PATH="${TOKEN_DB_PATH:-/app/data/tokens.db}"
 BACKUP_DIR="/app/backups"
-TOKENS_DB="/app/data/tokens.db"
-BACKUP_KEY="backups/tokens_$(date +%F).db"
+BACKUP_FILE="$BACKUP_DIR/tokens_$DATE.db"
 
-if [ -z "$SPACES_BUCKET" ] || [ -z "$SPACES_REGION" ] || [ -z "$SPACES_ACCESS_KEY" ] || [ -z "$SPACES_SECRET_KEY" ]; then
-    echo "Error: Missing required environment variables (SPACES_BUCKET, SPACES_REGION, SPACES_ACCESS_KEY, SPACES_SECRET_KEY)" >&2
+mkdir -p "$BACKUP_DIR"
+
+if ! cp "$DB_PATH" "$BACKUP_FILE"; then
+    echo "Error: Failed to copy tokens.db to backup directory"
     exit 1
 fi
 
-mkdir -p $BACKUP_DIR
+export AWS_ACCESS_KEY_ID="$SPACES_API_KEY"
+export AWS_SECRET_ACCESS_KEY="$SPACES_API_SECRET"
+export AWS_DEFAULT_REGION="$SPACES_REGION"
 
-if [ ! -f "$TOKENS_DB" ]; then
-    echo "Error: $TOKENS_DB not found" >&2
+aws --endpoint-url "$SPACES_ENDPOINT" s3 cp "$BACKUP_FILE" "s3://$SPACES_BUCKET/backups/tokens_$DATE.db"
+if [ $? -eq 0 ]; then
+    echo "Successfully uploaded tokens_$DATE.db to Spaces"
+else
+    echo "Error: Failed to upload tokens_$DATE.db to Spaces"
     exit 1
 fi
-
-cp $TOKENS_DB $BACKUP_DIR/tokens_$(date +%F).db
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to copy $TOKENS_DB to $BACKUP_DIR" >&2
-    exit 1
-fi
-
-AWS_ACCESS_KEY_ID=$SPACES_ACCESS_KEY AWS_SECRET_ACCESS_KEY=$SPACES_SECRET_KEY aws s3 cp \
-    $BACKUP_DIR/tokens_$(date +%F).db \
-    s3://$SPACES_BUCKET/$BACKUP_KEY \
-    --acl private \
-    --endpoint-url https://$SPACES_REGION.digitaloceanspaces.com
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to upload backup to Spaces" >&2
-    exit 1
-fi
-
-find $BACKUP_DIR -name "tokens_*.db" -mtime +7 -delete
-
-echo "Backup of $TOKENS_DB to s3://$SPACES_BUCKET/$BACKUP_KEY completed successfully"
-exit 0

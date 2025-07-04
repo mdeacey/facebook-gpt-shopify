@@ -98,17 +98,15 @@ async def oauth_callback(request: Request):
     print(f"Polling test result for {shop}: {polling_test_result}")
 
     upload_status_result = {"status": "failed", "message": "Tests failed"}
-    if (webhook_test_result("status") == "success"
-        and polling_test_result.get("status") == "success"
-    ):
+    if webhook_test_result.get("status") == "success" and polling_test_result.get("status") == "success":
         try:
             session = boto3.session.Session()
             s3_client = session.client(
                 "s3",
                 region_name=os.getenv("SPACES_REGION", "nyc3"),
                 endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-                aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
-                aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
+                aws_access_key_id=os.getenv("SPACES_API_KEY"),
+                aws_secret_access_key=os.getenv("SPACES_API_SECRET")
             )
             spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
             if has_data_changed(shopify_data, spaces_key, s3_client):
@@ -162,8 +160,8 @@ async def shopify_webhook(request: Request):
             "s3",
             region_name=os.getenv("SPACES_REGION", "nyc3"),
             endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-            aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
-            aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
+            aws_access_key_id=os.getenv("SPACES_API_KEY"),
+            aws_secret_access_key=os.getenv("SPACES_API_SECRET")
         )
         if has_data_changed(shopify_data, spaces_key, s3_client):
             upload_to_spaces(shopify_data, spaces_key, s3_client)

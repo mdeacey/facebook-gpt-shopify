@@ -202,8 +202,8 @@ async def poll_shopify_data(access_token: str, shop: str) -> dict:
             "s3",
             region_name=os.getenv("SPACES_REGION", "nyc3"),
             endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-            aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
-            aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
+            aws_access_key_id=os.getenv("SPACES_API_KEY"),
+            aws_secret_access_key=os.getenv("SPACES_API_SECRET")
         )
         spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
         if has_data_changed(shopify_data, spaces_key, s3_client):
