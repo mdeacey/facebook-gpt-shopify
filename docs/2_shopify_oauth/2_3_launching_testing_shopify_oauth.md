@@ -1,7 +1,7 @@
 # Chapter 2: Shopify Integration
 ## Subchapter 2.3: Launching and Testing Shopify OAuth
 
-This subchapter guides you through launching the FastAPI application built in Subchapter 2.1, using the Shopify development store and app credentials from Subchapter 2.2, and testing the Shopify OAuth flow. We’ll start the server, verify the root endpoint, initiate the OAuth process via `/shopify/{shop_name}/login`, authenticate with a Shopify account, and confirm the callback response at `/shopify/callback`. Each step includes expected outputs (e.g., server logs, Shopify login pages, JSON responses) and references to screenshots (not provided). The response includes a UUID to identify the user’s data for future platform integrations. This confirms the app can fetch Shopify data for the GPT Messenger sales bot.
+This subchapter guides you through launching the FastAPI application built in Subchapter 2.1, using the Shopify development store and app credentials from Subchapter 2.2, and testing the Shopify OAuth flow. We’ll start the server, verify the root endpoint, initiate the OAuth process via `/shopify/{shop_name}/login`, authenticate with a Shopify account, and confirm the callback response at `/shopify/callback`. Each step includes expected outputs (e.g., server logs, Shopify login pages, JSON responses) and references to screenshots (not provided). The response includes a UUID to identify the user’s data for future platform integrations. This confirms the app can fetch Shopify data for the GPT Messenger sales bot. Persistent storage is introduced in Chapter 3.
 
 ### Step 1: Launch the FastAPI Application
 **Action**: Navigate to your project directory and run:
@@ -20,10 +20,12 @@ INFO:     Application startup complete.
 ```
 
 **Screenshot Reference**: Terminal showing Uvicorn logs.
+
 **Why?**
 - Runs the FastAPI server (Subchapter 2.1’s `app.py`).
 - Confirms the server is listening on `http://0.0.0.0:5000`.
 - In GitHub Codespaces, accessible via `https://your-codespace-id-5000.app.github.dev`.
+- Validates environment variables to prevent runtime errors.
 
 ### Step 2: Test the Root Endpoint
 **Action**: Open a browser and navigate to:
@@ -39,9 +41,11 @@ INFO:     Application startup complete.
 ```
 
 **Screenshot Reference**: Browser showing JSON response.
+
 **Why?**
 - Confirms the server supports both Facebook (Chapter 1) and Shopify OAuth flows.
 - Guides users to the Shopify OAuth endpoint.
+- No session management or webhooks are included yet (introduced in Chapters 3–5).
 
 ### Step 3: Initiate Shopify OAuth
 **Action**: Navigate to the Shopify OAuth login endpoint, using your store name (e.g., `acme-7cu19ngr`):
@@ -62,6 +66,7 @@ Help  Privacy  Terms
 ```
 
 **Screenshot Reference**: Shopify login page with account selection.
+
 **Why?**
 - The `/shopify/{shop_name}/login` endpoint (Subchapter 2.1) constructs the OAuth URL with `SHOPIFY_API_KEY`, `SHOPIFY_REDIRECT_URI`, scopes, and a state token.
 - The store name matches the development store (Subchapter 2.2).
@@ -87,6 +92,7 @@ Help  Privacy  Terms
 ```
 
 **Screenshot Reference**: Shopify login page prompting for email or SSO.
+
 **Why?**
 - Links the OAuth flow to your Shopify user and store.
 - Prepares for authentication.
@@ -100,7 +106,9 @@ https://accounts.google.com/o/oauth2/auth/oauthchooseaccount?access_type=offline
 Log in with your Google account.
 
 **Expected Output**: Shopify redirects to the callback endpoint.
+
 **Screenshot Reference**: Google OAuth page.
+
 **Why?**
 - Shopify supports SSO for streamlined login.
 - Google OAuth verifies identity.
@@ -170,9 +178,11 @@ Browser displays JSON response (abridged):
 ```
 
 **Screenshot Reference**: Browser showing JSON response with `user_uuid`.
+
 **Why?**
 - Shopify redirects with parameters, which `/shopify/callback` validates and uses to generate a UUID and fetch data.
-- The `user_uuid` prepares for multi-platform integration.
+- The `user_uuid` prepares for multi-platform integration in Chapter 3.
+- Tokens are stored in `os.environ` (persistent storage in Chapter 3).
 
 ### Step 7: Verify the Integration
 **Action**: Review the JSON response to ensure:
@@ -186,12 +196,15 @@ Browser displays JSON response (abridged):
 - Response matches the example.
 - Server logs show HTTP 200:
 ```
-INFO:     127.0.0.1:12345 - "GET /shopify/callback?code=...&hmac=... HTTP/1.1" 200 OK
+INFO:     127.0.0.1:0 - "GET /shopify/acme-7cu19ngr/login HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:0 - "GET /shopify/callback?code=...&hmac=... HTTP/1.1" 200 OK
 ```
 
 **Screenshot Reference**: Terminal logs.
+
 **Why?**
 - Verifies OAuth and data retrieval for the sales bot.
+- Confirms tokens and UUIDs are stored in `os.environ` (persistent storage in Chapter 3).
 
 ### Step 8: Troubleshooting Common Issues
 If issues arise:
@@ -201,9 +214,10 @@ If issues arise:
 - **No products in response**: Confirm the store has test data (Subchapter 2.2) and correct scopes.
 - **No UUID in response**: Verify UUID generation in `/shopify/callback` (Subchapter 2.1).
 - **404 or 500 errors**: Check server and Codespaces URL.
+- **“Missing environment variables”**: Ensure all required variables are set in `.env` (Subchapter 2.1).
 
 **Why?**
-- Ensures a functional OAuth flow.
+- Ensures a functional OAuth flow, addressing setup errors.
 
 ### Step 9: Example Sales Bot Interaction
 The sales bot can use the data in later integrations, e.g.:
@@ -212,12 +226,15 @@ Customer: I’m looking for a premium snowboard.
 Bot: Try The Complete Snowboard for $699.95! Check it out: [https://acme-7cu19ngr.myshopify.com/products/the-complete-snowboard].
 ```
 
+**Why?**
+- Demonstrates how Shopify data supports bot functionality, with full integration in later chapters.
+
 ### Summary: Why This Subchapter Matters
-- **Server Verification**: Confirms FastAPI setup (Subchapter 2.1).
+- **Server Verification**: Confirms FastAPI setup and environment validation (Subchapter 2.1).
 - **OAuth Flow**: Tests Shopify API integration (Subchapter 2.2).
-- **UUID Generation**: Prepares for multi-platform linking.
-- **Bot Readiness**: Provides data for recommendations.
+- **UUID Generation**: Prepares for multi-platform linking in Chapter 3.
+- **Bot Readiness**: Provides data for recommendations, with persistent storage in Chapter 3.
 
 ### Next Steps:
 - Review Subchapter 2.1 or 2.2 if issues arise.
-- Proceed to Chapter 3 for platform linking.
+- Proceed to Chapter 3 for persistent storage and user identification.

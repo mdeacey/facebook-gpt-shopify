@@ -2,20 +2,20 @@
 ## Subchapter 5.1: Setting Up Shopify Webhooks for Real-Time Updates
 
 ### Introduction
-Shopify webhooks enable real-time notifications for product updates (e.g., title, inventory changes) to keep the GPT Messenger sales bot’s data current. This subchapter sets up a secure webhook endpoint in the FastAPI application, integrating HMAC verification and registering webhooks during the Shopify OAuth flow (Chapter 2) with appropriate permissions (`read_products`, `read_inventory`). The webhook system uses the UUID from the session-based mechanism (Chapter 3) to identify the user and stores data temporarily in `<shop_name>/shopify_data.json`, preparing for cloud storage in a later chapter. The focus is on non-sensitive product data, ensuring secure, production-ready operation for multiple users.
+Shopify webhooks enable real-time notifications for product updates (e.g., title, inventory changes) to keep the GPT Messenger sales bot’s data current. This subchapter sets up a secure webhook endpoint in the FastAPI application, integrating HMAC verification and registering webhooks during the Shopify OAuth flow (Chapter 2) with appropriate permissions (`read_products`, `read_inventory`). The webhook system uses the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user and stores data temporarily in `<shop_name>/shopify_data.json`, preparing for cloud storage in Chapter 6. The focus is on non-sensitive product data, using `TokenStorage` and `SessionStorage` for secure, production-ready operation.
 
 ### Prerequisites
-- Completed Chapters 1–4 (Facebook OAuth, Shopify OAuth, UUID/session management, Facebook data sync).
+- Completed Chapters 1–4 (Facebook OAuth, Shopify OAuth, Persistent Storage and User Identification, Facebook Data Sync).
 - FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment (e.g., GitHub Codespaces).
-- Shopify API credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`) set in `.env` (Chapter 2).
+- Shopify API credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`) and `STATE_TOKEN_SECRET` set in `.env` (Chapter 2).
 - `session_id` cookie set by Shopify OAuth (Chapter 3).
-- Shop access tokens (`SHOPIFY_ACCESS_TOKEN_<shop_key>`) and UUID mappings (`USER_UUID_<shop_key>`) stored in the environment.
+- SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
 - A publicly accessible webhook URL (e.g., via ngrok).
 
 ---
 
 ### Step 1: Configure Environment Variables
-Update the `.env` file to include webhook-specific variables for Shopify, in addition to credentials from Chapters 1–3.
+Update the `.env` file to include webhook-specific variables for Shopify, in addition to credentials from Chapters 1–4.
 
 **Updated `.env.example`**:
 ```plaintext
@@ -42,6 +42,7 @@ STATE_TOKEN_SECRET=replace_with_secure_token
 **Why?**
 - Authenticates the OAuth flow and secures webhook verification.
 - Prepares for webhook registration and event processing.
+- Excludes Spaces variables (introduced in Chapter 6).
 
 ### Step 2: Update Project Structure
 The project structure builds on Chapters 1–4:
@@ -58,7 +59,8 @@ The project structure builds on Chapters 1–4:
 │   └── utils.py
 ├── shared/
 │   ├── __init__.py
-│   ├── session.py
+│   ├── sessions.py
+│   ├── tokens.py
 │   └── utils.py
 ├── .env
 ├── .env.example
@@ -69,13 +71,12 @@ The project structure builds on Chapters 1–4:
 ```
 
 **Why?**
-- `shopify_integration/` contains webhook routes and utilities.
-- `shared/session.py` supports session-based UUID retrieval (Chapter 3).
-- `shared/utils.py` provides CSRF protection with UUID support.
-- Modular design ensures consistency.
+- `shopify_integration/` contains webhook routes and utilities, using `TokenStorage` and `SessionStorage`.
+- `shared/sessions.py` and `shared/tokens.py` manage persistent storage (Chapter 3).
+- Excludes Spaces integration (Chapter 6).
 
 ### Step 3: Update `shopify_integration/utils.py`
-Add webhook registration and verification functions, building on OAuth functions from Chapter 2.
+Add webhook registration and verification functions, using `TokenStorage`.
 
 ```python
 import os
@@ -86,6 +87,9 @@ import hmac
 import hashlib
 import base64
 import asyncio
+from shared.tokens import TokenStorage
+
+token_storage = TokenStorage()
 
 async def exchange_code_for_token(code: str, shop: str):
     url = f"https://{shop}/admin/oauth/access_token"
@@ -227,10 +231,12 @@ async def register_webhooks(shop: str, access_token: str):
 - **OAuth Functions**: Reuses token exchange and data fetching from Chapter 2.
 - **Webhook Verification**: Validates incoming webhooks with HMAC.
 - **Webhook Registration**: Subscribes to `products/update` events during OAuth.
+- **TokenStorage**: Initialized for token retrieval.
 - **Error Handling**: Ensures robust webhook setup.
+- **Typo Fix**: Corrected `subcribed_fields` to `subscribed_fields` in context (not in code here).
 
 ### Step 4: Update `shopify_integration/routes.py`
-Add a webhook endpoint and test webhook registration in `/callback`.
+Add a webhook endpoint and test webhook registration in `/callback`, using `TokenStorage` and `SessionStorage`.
 
 ```python
 import os
@@ -240,13 +246,16 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks
 from shared.utils import generate_state_token, validate_state_token
-from shared.session import generate_session_id, store_uuid
+from shared.sessions import SessionStorage
+from shared.tokens import TokenStorage
 import httpx
 import hmac
 import hashlib
 import base64
 
 router = APIRouter()
+session_storage = SessionStorage()
+token_storage = TokenStorage()
 
 @router.get("/{shop_name}/login")
 async def start_oauth(shop_name: str):
@@ -282,13 +291,13 @@ async def oauth_callback(request: Request):
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
     shop_key = shop.replace('.', '_')
-    os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop_key}"] = token_data["access_token"]
+    token_storage.store_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}", token_data["access_token"], type="token")
 
     user_uuid = str(uuid.uuid4())
-    os.environ[f"USER_UUID_{shop_key}"] = user_uuid
+    token_storage.store_token(f"USER_UUID_{shop_key}", user_uuid, type="uuid")
 
-    session_id = generate_session_id()
-    store_uuid(session_id, user_uuid)
+    session_id = session_storage.generate_session_id()
+    session_storage.store_uuid(session_id, user_uuid)
 
     webhook_test_result = {"status": "failed", "message": "Webhook registration failed"}
     try:
@@ -301,7 +310,7 @@ async def oauth_callback(request: Request):
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"http://localhost:5000/shopify/webhook",
+                f"{os.getenv('SHOPIFY_WEBHOOK_ADDRESS', 'http://localhost:5000/shopify/webhook')}",
                 headers={
                     "X-Shopify-Topic": "products/update",
                     "X-Shopify-Shop-Domain": shop,
@@ -345,12 +354,11 @@ async def shopify_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Missing shop domain")
 
     shop_key = shop.replace('.', '_')
-    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop_key}"
-    access_token = os.getenv(access_token_key)
+    access_token = token_storage.get_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}")
     if not access_token:
         raise HTTPException(status_code=500, detail="Access token not found")
 
-    user_uuid = os.getenv(f"USER_UUID_{shop_key}")
+    user_uuid = token_storage.get_token(f"USER_UUID_{shop_key}")
     if not user_uuid:
         raise HTTPException(status_code=500, detail="User UUID not found for shop")
 
@@ -373,8 +381,9 @@ async def shopify_webhook(request: Request):
 **Why?**
 - **Login Endpoint**: Initiates OAuth with scopes for products and inventory (Chapter 2).
 - **Callback Endpoint**: Registers webhooks, tests the webhook endpoint, stores data in `<shop_name>/shopify_data.json`, sets the `session_id` cookie, and returns results with `user_uuid`.
-- **Webhook Endpoint**: Processes `products/update` events, storing updates in `<shop_name>/shopify_data.json` using the UUID.
+- **Webhook Endpoint**: Processes `products/update` events, storing updates in temporary files using `TokenStorage`.
 - **Security**: Uses HMAC verification, excludes tokens, and sets a secure cookie.
+- **Temporary Storage**: Prepares for cloud storage in Chapter 6.
 
 ### Step 5: Configure Webhook in Shopify Admin
 **Action**: Set up the webhook in the Shopify Admin:
@@ -389,10 +398,12 @@ async def shopify_webhook(request: Request):
 **Expected Output**: Shopify confirms webhook creation.
 
 **Screenshot Reference**: Shopify Admin webhook settings page showing the `Product update` webhook.
+
 **Why?**
 - Configures Shopify to send `products/update` events to `/shopify/webhook`.
 - Requires `read_products` permission.
 - Ngrok ensures local testing accessibility.
+- Uses `SHOPIFY_WEBHOOK_ADDRESS` for flexibility.
 
 ### Step 6: Update `requirements.txt`
 Ensure dependencies support webhooks.
@@ -402,14 +413,30 @@ fastapi
 uvicorn
 httpx
 python-dotenv
+cryptography
 apscheduler
 ```
 
 **Why?**
-- `apscheduler` is included for future polling (Subchapter 5.2).
-- Other dependencies support OAuth and webhooks.
+- `apscheduler` is included for polling (Subchapter 5.2).
+- `cryptography` supports `TokenStorage` and `SessionStorage` (Chapter 3).
+- Excludes `boto3` (introduced in Chapter 6).
 
-### Step 7: Testing Preparation
+### Step 7: Update `.gitignore`
+Ensure SQLite databases are excluded.
+
+```plaintext
+__pycache__/
+*.pyc
+.env
+.DS_Store
+*.db
+```
+
+**Why?**
+- Excludes `tokens.db` and `sessions.db`.
+
+### Step 8: Testing Preparation
 To verify the webhook setup:
 1. Update `.env` with `SHOPIFY_WEBHOOK_ADDRESS`.
 2. Install dependencies: `pip install -r requirements.txt`.
@@ -419,10 +446,10 @@ To verify the webhook setup:
 
 ### Summary: Why This Subchapter Matters
 - **Real-Time Updates**: Webhooks keep product data current for the sales bot.
-- **Security**: HMAC verification and session-based UUID retrieval ensure secure, multi-user operation.
+- **Security**: HMAC verification, `TokenStorage`, and `SessionStorage` ensure secure, multi-user operation.
 - **UUID Integration**: Links data using the UUID from Chapter 3.
 - **Scalability**: Async processing supports high traffic.
-- **Temporary Storage**: Prepares for cloud storage in a later chapter.
+- **Temporary Storage**: Prepares for cloud storage in Chapter 6.
 
 ### Next Steps:
 - Implement daily polling for redundancy (Subchapter 5.2).

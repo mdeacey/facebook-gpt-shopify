@@ -2,27 +2,26 @@
 ## Subchapter 4.2: Implementing Daily Polling for Redundancy
 
 ### Introduction
-While webhooks (Subchapter 4.1) provide real-time updates for Facebook page metadata (e.g., name, category), they can miss events due to network issues or downtime. This subchapter implements a daily polling mechanism to fetch page data periodically, ensuring the GPT Messenger sales bot’s data remains up-to-date. Polling uses the same UUID-based identification from the session-based mechanism (Chapter 3) as webhooks, storing data temporarily in `facebook/<page_id>/page_data.json` to prepare for cloud storage in a later chapter. We integrate polling into the OAuth flow for testing and schedule it daily using APScheduler, maintaining non-sensitive metadata for secure, production-ready operation across multiple users.
+While webhooks (Subchapter 4.1) provide real-time updates for Facebook page metadata (e.g., name, category), they can miss events due to network issues or downtime. This subchapter implements a daily polling mechanism to fetch page data periodically, ensuring the GPT Messenger sales bot’s data remains up-to-date. Polling uses the SQLite-based `TokenStorage` (Chapter 3) for token and UUID retrieval and temporarily stores data in `facebook/<page_id>/page_data.json`, preparing for cloud storage in Chapter 6. We integrate polling into the OAuth flow for testing and schedule it daily using APScheduler, maintaining non-sensitive metadata for secure, production-ready operation.
 
 ### Prerequisites
-- Completed Chapters 1–3 (Facebook OAuth, Shopify OAuth, UUID/session management).
-- Webhook setup completed (Subchapter 4.1).
-- FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment (e.g., GitHub Codespaces).
-- Facebook API credentials (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_REDIRECT_URI`, `FACEBOOK_WEBHOOK_ADDRESS`, `FACEBOOK_VERIFY_TOKEN`) set in `.env`.
+- Completed Chapters 1–3 and Subchapter 4.1.
+- FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment.
+- Facebook API credentials (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_REDIRECT_URI`, `FACEBOOK_WEBHOOK_ADDRESS`, `FACEBOOK_VERIFY_TOKEN`) and `STATE_TOKEN_SECRET` set in `.env`.
 - `session_id` cookie set by Shopify OAuth (Chapter 3).
-- Page access tokens (`FACEBOOK_ACCESS_TOKEN_<page_id>`) and UUID mappings (`PAGE_UUID_<page_id>`) stored in the environment.
+- SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
 
 ---
 
 ### Step 1: Why Daily Polling?
 Polling complements webhooks by:
 - Fetching page metadata daily to catch missed webhook events.
-- Using the same UUID-based structure for consistency with webhooks.
+- Using `TokenStorage` for consistent token/UUID retrieval (Chapter 3).
 - Ensuring data availability for the sales bot (e.g., page name, contact details).
-- Supporting multiple users via session-based UUID retrieval.
+- Supporting multiple users via SQLite-based storage.
 
 ### Step 2: Update Project Structure
-The project structure remains as defined in Chapters 1–3, with polling logic added to `facebook_integration/utils.py`:
+The project structure remains as defined in Subchapter 4.1:
 ```
 .
 ├── app.py
@@ -36,7 +35,8 @@ The project structure remains as defined in Chapters 1–3, with polling logic a
 │   └── utils.py
 ├── shared/
 │   ├── __init__.py
-│   ├── session.py
+│   ├── sessions.py
+│   ├── tokens.py
 │   └── utils.py
 ├── .env
 ├── .env.example
@@ -47,13 +47,12 @@ The project structure remains as defined in Chapters 1–3, with polling logic a
 ```
 
 **Why?**
-- `facebook_integration/utils.py` handles polling logic.
-- `shared/session.py` supports session-based UUID retrieval (Chapter 3).
-- `shared/utils.py` provides CSRF protection with UUID support.
-- No new modules are needed, maintaining modularity.
+- `facebook_integration/utils.py` handles polling logic using `TokenStorage`.
+- `shared/sessions.py` and `shared/tokens.py` support persistent storage.
+- Excludes Spaces integration (Chapter 6).
 
 ### Step 3: Update `app.py`
-Add APScheduler to schedule daily polling for all authenticated Facebook pages, using UUID mappings.
+Add APScheduler to schedule daily polling for Facebook pages, using environment validation.
 
 ```python
 from fastapi import FastAPI
@@ -69,11 +68,21 @@ import atexit
 
 load_dotenv()
 
+required_env_vars = [
+    "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "FACEBOOK_REDIRECT_URI",
+    "FACEBOOK_WEBHOOK_ADDRESS", "FACEBOOK_VERIFY_TOKEN",
+    "SHOPIFY_API_KEY", "SHOPIFY_API_SECRET", "SHOPIFY_REDIRECT_URI",
+    "STATE_TOKEN_SECRET"
+]
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+if missing_vars:
+    raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
 app = FastAPI(title="Facebook and Shopify OAuth with FastAPI")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Adjust in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -107,11 +116,11 @@ if __name__ == "__main__":
 **Why?**
 - **Scheduler**: Uses APScheduler to run `facebook_daily_poll` daily at midnight.
 - **Shutdown Hook**: Ensures clean scheduler shutdown.
-- **Modular Routers**: Supports both OAuth flows (Chapters 1–2).
-- **CORS**: Enables frontend interaction.
+- **Environment Validation**: Includes webhook variables.
+- **Excludes Shopify Polling**: Shopify polling is introduced in Chapter 5.
 
 ### Step 4: Update `facebook_integration/utils.py`
-Add a polling function to fetch page data, storing it temporarily with the UUID.
+Add a polling function using `TokenStorage`, storing data temporarily.
 
 ```python
 import os
@@ -120,6 +129,9 @@ import hmac
 import hashlib
 from fastapi import HTTPException, Request
 import json
+from shared.tokens import TokenStorage
+
+token_storage = TokenStorage()
 
 async def exchange_code_for_token(code: str):
     url = "https://graph.facebook.com/v19.0/oauth/access_token"
@@ -184,13 +196,15 @@ async def get_existing_subscriptions(page_id: str, access_token: str):
         response = await client.get(url, headers=headers)
         return response.json().get("data", [])
 
-async def poll_facebook_data(access_token: str, page_id: str):
+async def poll_facebook_data(access_token: str, page_id: str) -> dict:
     try:
-        page_data = await get_facebook_data(access_token)
-        user_uuid = os.getenv(f"PAGE_UUID_{page_id}")
+        user_access_token = token_storage.get_token("FACEBOOK_USER_ACCESS_TOKEN")
+        if not user_access_token:
+            raise HTTPException(status_code=500, detail="User access token not found")
+        user_uuid = token_storage.get_token(f"PAGE_UUID_{page_id}")
         if not user_uuid:
-            return {"status": "error", "message": f"User UUID not found for page {page_id}"}
-
+            raise HTTPException(status_code=500, detail=f"User UUID not found for page {page_id}")
+        page_data = await get_facebook_data(user_access_token)
         os.makedirs(f"facebook/{page_id}", exist_ok=True)
         with open(f"facebook/{page_id}/page_data.json", "w") as f:
             json.dump(page_data, f)
@@ -200,23 +214,34 @@ async def poll_facebook_data(access_token: str, page_id: str):
         print(f"Failed to poll data for page {page_id}: {str(e)}")
         return {"status": "error", "message": str(e)}
 
-def daily_poll():
-    for key, value in os.environ.items():
-        if key.startswith("FACEBOOK_ACCESS_TOKEN_") and key != "FACEBOOK_USER_ACCESS_TOKEN":
-            page_id = key.replace("FACEBOOK_ACCESS_TOKEN_", "")
-            access_token = value
-            result = poll_facebook_data(access_token, page_id)
-            print(f"Polled data for page {page_id}: {result['status']}")
+async def daily_poll():
+    page_ids = [
+        key.replace("FACEBOOK_ACCESS_TOKEN_", "")
+        for key in token_storage.get_all_tokens_by_type("token")
+        if key.startswith("FACEBOOK_ACCESS_TOKEN_")
+    ]
+
+    for page_id in page_ids:
+        try:
+            access_token = token_storage.get_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}")
+            if access_token:
+                result = await poll_facebook_data(access_token, page_id)
+                if result["status"] == "success":
+                    print(f"Polled data for page {page_id}: Success")
+                else:
+                    print(f"Polling failed for page {page_id}: {result['message']}")
+        except Exception as e:
+            print(f"Daily poll failed for page {page_id}: {str(e)}")
 ```
 
 **Why?**
-- **Polling Function**: `poll_facebook_data` fetches page data, storing it in `facebook/<page_id>/page_data.json` using the UUID.
-- **Daily Poll**: `daily_poll` iterates over stored page access tokens, calling `poll_facebook_data`.
+- **Polling Function**: `poll_facebook_data` fetches page data using `TokenStorage`, storing in temporary files.
+- **Daily Poll**: `daily_poll` iterates over page tokens in `tokens.db`, calling `poll_facebook_data`.
 - **Error Handling**: Returns status and error messages.
 - **Temporary Storage**: Prepares for cloud storage in Chapter 6.
 
 ### Step 5: Update `facebook_integration/routes.py`
-Integrate polling into the OAuth flow for immediate testing, using the session-based UUID.
+Integrate polling into the OAuth flow for immediate testing.
 
 ```python
 import os
@@ -228,10 +253,13 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions, poll_facebook_data
 from shared.utils import generate_state_token, validate_state_token
-from shared.session import get_uuid, clear_session
+from shared.sessions import SessionStorage
+from shared.tokens import TokenStorage
 import httpx
 
 router = APIRouter()
+token_storage = TokenStorage()
+session_storage = SessionStorage()
 
 @router.get("/login")
 async def start_oauth(request: Request):
@@ -248,7 +276,7 @@ async def start_oauth(request: Request):
     session_id = request.cookies.get("session_id")
     if not session_id:
         raise HTTPException(status_code=400, detail="Missing session_id cookie")
-    user_uuid = get_uuid(session_id)
+    user_uuid = session_storage.get_uuid(session_id)
     if not user_uuid:
         raise HTTPException(status_code=400, detail="Invalid or expired session")
 
@@ -276,24 +304,24 @@ async def oauth_callback(request: Request):
 
     session_id = request.cookies.get("session_id")
     if session_id:
-        clear_session(session_id)
+        session_storage.clear_session(session_id)
 
     token_data = await exchange_code_for_token(code)
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
-    os.environ["FACEBOOK_USER_ACCESS_TOKEN"] = token_data["access_token"]
+    token_storage.store_token("FACEBOOK_USER_ACCESS_TOKEN", token_data["access_token"], type="token")
 
     pages = await get_facebook_data(token_data["access_token"])
 
     polling_test_results = []
     for page in pages.get("data", []):
         page_id = page["id"]
-        os.environ[f"FACEBOOK_ACCESS_TOKEN_{page_id}"] = page["access_token"]
-        os.environ[f"PAGE_UUID_{page_id}"] = user_uuid
+        token_storage.store_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}", page["access_token"], type="token")
+        token_storage.store_token(f"PAGE_UUID_{page_id}", user_uuid, type="uuid")
 
         existing_subscriptions = await get_existing_subscriptions(page_id, page["access_token"])
-        if not any("name" in sub.get("subscribed_fields", []) for sub in existing_subcriptions):
+        if not any("name" in sub.get("subscribed_fields", []) for sub in existing_subscriptions):
             await register_webhooks(page_id, page["access_token"])
         else:
             print(f"Webhook subscription for 'name,category' already exists for page {page_id}")
@@ -314,7 +342,7 @@ async def oauth_callback(request: Request):
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            f"http://localhost:5000/facebook/webhook",
+            f"{os.getenv('FACEBOOK_WEBHOOK_ADDRESS', 'http://localhost:5000/facebook/webhook')}",
             headers={
                 "X-Hub-Signature": hmac_signature,
                 "Content-Type": "application/json"
@@ -353,13 +381,12 @@ async def facebook_webhook(request: Request):
         if not page_id:
             continue
 
-        access_token_key = f"FACEBOOK_ACCESS_TOKEN_{page_id}"
-        access_token = os.getenv(access_token_key)
+        access_token = token_storage.get_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}")
         if not access_token:
             print(f"Access token not found for page {page_id}")
             continue
 
-        user_uuid = os.getenv(f"PAGE_UUID_{page_id}")
+        user_uuid = token_storage.get_token(f"PAGE_UUID_{page_id}")
         if not user_uuid:
             print(f"User UUID not found for page {page_id}")
             continue
@@ -389,10 +416,10 @@ async def verify_webhook_subscription(request: Request):
 ```
 
 **Why?**
-- **Login Endpoint**: Uses the `session_id` cookie to retrieve the UUID (Chapter 3).
+- **Login Endpoint**: Uses `SessionStorage` for UUID retrieval.
 - **Callback Endpoint**: Registers webhooks, tests polling and webhook endpoints, stores data temporarily, and returns results with `user_uuid`.
-- **Webhook Endpoint**: Processes `name,category` events, storing updates in `facebook/<page_id>/page_data.json`.
-- **Security**: Excludes tokens, uses HMAC, and clears sessions.
+- **Webhook Endpoint**: Processes `name,category` events, storing updates in temporary files.
+- **Security**: Uses `TokenStorage`, excludes tokens, uses HMAC, and clears sessions.
 
 ### Step 6: Update `requirements.txt`
 Add APScheduler for scheduling.
@@ -402,14 +429,30 @@ fastapi
 uvicorn
 httpx
 python-dotenv
+cryptography
 apscheduler
 ```
 
 **Why?**
 - `apscheduler` enables daily polling.
-- Other dependencies support OAuth and webhooks.
+- `cryptography` supports `TokenStorage` and `SessionStorage`.
+- Excludes `boto3` (introduced in Chapter 6).
 
-### Step 7: Testing Preparation
+### Step 7: Update `.gitignore`
+Ensure SQLite databases are excluded.
+
+```plaintext
+__pycache__/
+*.pyc
+.env
+.DS_Store
+*.db
+```
+
+**Why?**
+- Excludes `tokens.db` and `sessions.db`.
+
+### Step 8: Testing Preparation
 To verify polling:
 1. Update `.env` with `FACEBOOK_WEBHOOK_ADDRESS` and `FACEBOOK_VERIFY_TOKEN`.
 2. Install dependencies: `pip install -r requirements.txt`.
@@ -420,9 +463,9 @@ To verify polling:
 
 ### Summary: Why This Subchapter Matters
 - **Data Redundancy**: Polling ensures data consistency alongside webhooks.
-- **UUID Integration**: Uses the session-based UUID for multi-platform linking.
+- **UUID Integration**: Uses `TokenStorage` for multi-platform linking.
 - **Scalability**: Async polling and scheduling support production environments.
-- **Temporary Storage**: Prepares for cloud storage in a later chapter.
+- **Temporary Storage**: Prepares for cloud storage in Chapter 6.
 
 ### Next Steps:
 - Test webhooks and polling (Subchapter 4.3).

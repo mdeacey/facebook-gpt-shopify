@@ -1,52 +1,85 @@
 # Chapter 6: DigitalOcean Integration
-## Subchapter 6.3: Creating DigitalOcean Spaces Bucket
+## Subchapter 6.3: Creating a DigitalOcean Spaces Bucket
 
 ### Introduction
-DigitalOcean Spaces provides a scalable, S3-compatible object storage service to store data for the GPT Messenger sales bot. This subchapter guides you through creating a Spaces bucket and generating API keys to enable secure data storage for the application’s integrations. The bucket will store data in a structured format, ensuring accessibility and scalability for the bot’s operations.
+This subchapter guides you through creating a DigitalOcean Spaces bucket to store Facebook and Shopify data for the GPT Messenger sales bot. The bucket provides S3-compatible storage for persistent, scalable data management, replacing temporary file storage from Chapters 4–5. We configure the bucket and generate API credentials (`SPACES_KEY`, `SPACES_SECRET`) for use in Subchapters 6.1–6.2, organizing data by UUID (`users/<uuid>/...`) from `TokenStorage` (Chapter 3). The process is performed in the DigitalOcean control panel, ensuring compatibility with the FastAPI application running on a Droplet.
 
 ### Prerequisites
-- A DigitalOcean account.
-- Completed Chapters 1–5 (Facebook OAuth, Shopify OAuth, UUID/session management, Facebook data sync, Shopify data sync).
-- FastAPI application running locally or in a production-like environment.
+- Completed Chapters 1–5 and Subchapters 6.1–6.2.
+- DigitalOcean account with access to the control panel.
+- FastAPI application running on a DigitalOcean Droplet or locally.
+- SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
 
 ---
 
-### Step 1: Create a DigitalOcean Spaces Bucket
-**Action**: Set up a Spaces bucket in the DigitalOcean Control Panel.
-1. Log into your DigitalOcean account at `cloud.digitalocean.com`.
-2. Navigate to **Create > Spaces**.
-3. Choose a datacenter region (e.g., `nyc3` for New York).
-4. Enable or disable CDN based on your needs (disable for simplicity during testing).
-5. Set a unique bucket name (e.g., `gpt-messenger-bot-data`).
-6. Select **File access: Restricted** to ensure secure access via API keys.
-7. Click **Create a Space**.
+### Step 1: Access the DigitalOcean Control Panel
+**Action**: Log into the DigitalOcean control panel at [cloud.digitalocean.com](https://cloud.digitalocean.com).
 
-**Expected Output**: The bucket appears in the DigitalOcean Control Panel under **Spaces**.
+**Screenshot Reference**: Shows the DigitalOcean dashboard.
 
-**Screenshot Reference**: DigitalOcean Control Panel showing the created bucket.
 **Why?**
-- The bucket provides a storage location for bot data.
-- Restricted access ensures security through API key authentication.
+- The control panel manages Spaces, Droplets, and API credentials.
+- Ensures you have access to create a bucket for the sales bot.
 
-### Step 2: Generate API Keys
-**Action**: Create API keys for programmatic access to the bucket.
-1. In the DigitalOcean Control Panel, navigate to **API > Spaces Keys**.
-2. Click **Generate New Key**.
-3. Enter a name for the key (e.g., `gpt-messenger-bot-key`).
-4. Click **Generate Key**.
-5. Copy the **Access Key** and **Secret Key** displayed.
+### Step 2: Navigate to Spaces
+**Action**: In the left sidebar, click “Spaces” under “Manage”. If no Spaces exist, you’ll see a prompt to create one.
 
-**Expected Output**: You receive an Access Key (e.g., `DO00...`) and a Secret Key (e.g., `abc123...`).
+**Screenshot Reference**: Shows the “Spaces” section with a “Create Spaces” button.
 
-**Screenshot Reference**: API section showing the generated keys.
 **Why?**
-- API keys enable secure interactions with Spaces via `boto3`.
-- The keys will be used in `.env` for Subchapters 6.1, 6.2, and 6.4.
+- The “Spaces” section manages S3-compatible storage buckets.
+- Creating a bucket enables persistent storage for Facebook and Shopify data.
 
-### Step 3: Configure Environment Variables
-Add Spaces credentials to the `.env` file.
+### Step 3: Create a New Space
+**Action**: Click the “Create Spaces” button. Configure the following:
+- **Datacenter region**: Select `NYC3` (New York) or a region close to your Droplet for low latency.
+- **Enable CDN**: Disable for simplicity (enable in production for performance).
+- **Unique name**: Enter a unique name, e.g., `gpt-messenger-data`.
+- **Project**: Select your Droplet’s project or “Default Project”.
 
-**Updated `.env.example`**:
+Click “Create a Space”.
+
+**Screenshot Reference**: Shows the Spaces creation form with region, name, and project fields.
+
+**Why?**
+- **Region**: Minimizes latency for Droplet access.
+- **CDN**: Disabled for testing; enable in production for faster access.
+- **Unique name**: Identifies the bucket (e.g., `gpt-messenger-data`).
+- **Project**: Organizes resources within your DigitalOcean account.
+
+### Step 4: Configure Bucket Settings
+**Action**: After creation, navigate to the bucket’s “Settings” tab:
+- **File listing**: Disable to prevent public directory browsing.
+- **CORS Configurations**: Add a configuration to allow your app’s origin, e.g.:
+  - **Origin**: `http://localhost:5000` (or your Droplet’s domain, e.g., `https://your-app.com`).
+  - **Allowed Methods**: `GET`, `POST`, `PUT`.
+  - **Allowed Headers**: `*`.
+
+Click “Save”.
+
+**Screenshot Reference**: Shows the bucket settings with file listing disabled and CORS configured.
+
+**Why?**
+- **File listing**: Disabling enhances security by preventing public access.
+- **CORS**: Allows the FastAPI app to interact with Spaces, matching the CORS settings in `app.py` (Chapter 1).
+- **Production Note**: Use HTTPS origins in production.
+
+### Step 5: Generate API Credentials
+**Action**: In the DigitalOcean control panel, navigate to “API” in the left sidebar. Under “Spaces keys”, click “Generate New Key”. Configure:
+- **Name**: Enter `gpt-messenger-key`.
+- **Expiration**: Select “No expiry” for simplicity (set an expiration in production).
+
+Click “Generate Key”. Copy the `Key` and `Secret` displayed.
+
+**Screenshot Reference**: Shows the API section with the generated Spaces key.
+
+**Why?**
+- Provides `SPACES_KEY` and `SPACES_SECRET` for `boto3` authentication in Subchapters 6.1–6.2.
+- **Production Note**: Rotate keys regularly and set expirations.
+
+### Step 6: Update Environment Variables
+Add Spaces credentials to your `.env` file.
+
 ```plaintext
 # Facebook OAuth credentials
 FACEBOOK_APP_ID=your_facebook_app_id
@@ -59,56 +92,35 @@ SHOPIFY_API_KEY=your_shopify_api_key
 SHOPIFY_API_SECRET=your_shopify_api_secret
 SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
 SHOPIFY_WEBHOOK_ADDRESS=https://your-app.com/shopify/webhook
+# DigitalOcean Spaces credentials
+SPACES_KEY=your_spaces_key
+SPACES_SECRET=your_spaces_secret
+SPACES_REGION=nyc3
+SPACES_BUCKET=gpt-messenger-data
+SPACES_ENDPOINT=https://nyc3.digitaloceanspaces.com
 # Shared secret for state token CSRF protection
 STATE_TOKEN_SECRET=replace_with_secure_token
-# DigitalOcean Spaces credentials
-SPACES_ACCESS_KEY=your_access_key
-SPACES_SECRET_KEY=your_secret_key
-SPACES_BUCKET=your_bucket_name
-SPACES_REGION=nyc3
-```
-
-**Notes**:
-- Replace `SPACES_ACCESS_KEY`, `SPACES_SECRET_KEY`, and `SPACES_BUCKET` with values from Steps 1 and 2.
-- `SPACES_REGION` matches the bucket’s region (e.g., `nyc3`).
-- **Production Note**: Store keys securely and restrict permissions to read/write operations.
-
-**Why?**
-- Configures the application to access the Spaces bucket securely.
-
-### Step 4: Project Structure
-The project structure includes `digitalocean_integration/` from Subchapter 6.1:
-```
-.
-├── app.py
-├── facebook_integration/
-│   ├── __init__.py
-│   ├── routes.py
-│   └── utils.py
-├── shopify_integration/
-│   ├── __init__.py
-│   ├── routes.py
-│   └── utils.py
-├── digitalocean_integration/
-│   ├── __init__.py
-│   └── utils.py
-├── shared/
-│   ├── __init__.py
-│   ├── session.py
-│   └── utils.py
-├── .env
-├── .env.example
-├── .gitignore
-├── LICENSE
-├── README.md
-└── requirements.txt
 ```
 
 **Why?**
-- `digitalocean_integration/utils.py` supports Spaces operations.
-- Consistent with previous chapters.
+- Enables `boto3` to authenticate with Spaces.
+- Matches bucket settings from Step 3.
 
-### Step 5: Update `requirements.txt`
+### Step 7: Update `.gitignore`
+Ensure SQLite databases are excluded.
+
+```plaintext
+__pycache__/
+*.pyc
+.env
+.DS_Store
+*.db
+```
+
+**Why?**
+- Excludes `tokens.db` and `sessions.db` to prevent committing sensitive data.
+
+### Step 8: Update `requirements.txt`
 Ensure `boto3` is included.
 
 ```plaintext
@@ -116,25 +128,28 @@ fastapi
 uvicorn
 httpx
 python-dotenv
+cryptography
 apscheduler
 boto3
 ```
 
 **Why?**
-- `boto3` enables Spaces API interactions.
+- `boto3` enables Spaces integration.
+- Other dependencies support OAuth, webhooks, and polling.
 
-### Step 6: Testing Preparation
+### Step 9: Testing Preparation
 To verify bucket setup:
-1. Update `.env` with `SPACES_*` variables.
+1. Update `.env` with Spaces credentials.
 2. Install dependencies: `pip install -r requirements.txt`.
-3. Run the app: `python app.py`.
-4. Testing is covered in Subchapter 6.4.
+3. Verify bucket access in the DigitalOcean control panel.
+4. Testing details are in Subchapter 6.4.
 
 ### Summary: Why This Subchapter Matters
-- **Scalable Storage**: Sets up a Spaces bucket for bot data.
-- **Security**: Uses restricted access and API keys.
-- **Integration Readiness**: Prepares for data sync in Subchapters 6.1 and 6.2.
-- **Scalability**: Supports production environments.
+- **Persistent Storage**: Creates a Spaces bucket for scalable data storage.
+- **Security**: Configures private access and CORS for the FastAPI app.
+- **Bot Readiness**: Prepares for storing Facebook and Shopify data (Subchapters 6.1–6.2).
 
 ### Next Steps:
+- Complete Facebook data sync (Subchapter 6.1, already done).
+- Complete Shopify data sync (Subchapter 6.2, already done).
 - Test Spaces integration (Subchapter 6.4).

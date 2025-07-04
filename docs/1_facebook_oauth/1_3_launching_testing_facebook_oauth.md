@@ -1,7 +1,7 @@
 # Chapter 1: Facebook Integration
 ## Subchapter 1.3: Launching and Testing Facebook OAuth
 
-This subchapter guides you through launching the FastAPI application built in Subchapter 1.1 and testing the Facebook OAuth flow configured with the app credentials from Subchapter 1.2. We’ll start the server, verify the root endpoint, initiate the OAuth process via `/facebook/login`, and confirm the callback response at `/facebook/callback`. Each step includes expected outputs (e.g., server logs, JSON responses) and references to screenshots (not provided) to ensure the integration works correctly. This confirms that your app can authenticate with Facebook and retrieve comprehensive non-sensitive page data for the GPT Messenger sales bot.
+This subchapter guides you through launching the FastAPI application built in Subchapter 1.1, using the Facebook app credentials from Subchapter 1.2, and testing the Facebook OAuth flow. We’ll start the server, verify the root endpoint, initiate the OAuth process via `/facebook/login`, and confirm the callback response at `/facebook/callback`. Each step includes expected outputs (e.g., server logs, JSON responses) and references to screenshots (not provided) to ensure the integration works correctly. This confirms that your app can authenticate with Facebook and retrieve comprehensive, non-sensitive page data for the GPT Messenger sales bot. Persistent storage for tokens is introduced in Chapter 3.
 
 ### Step 1: Launch the FastAPI Application
 **Action**: Navigate to your project directory and run:
@@ -20,10 +20,12 @@ INFO:     Application startup complete.
 ```
 
 **Screenshot Reference**: Terminal showing Uvicorn logs.
+
 **Why?**
 - Runs the FastAPI server using Uvicorn (Subchapter 1.1’s `app.py`).
 - Confirms the server is listening on `http://0.0.0.0:5000`.
 - In GitHub Codespaces, accessible via a public URL (e.g., `https://your-codespace-id-5000.app.github.dev`).
+- Validates environment variables (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_REDIRECT_URI`, `STATE_TOKEN_SECRET`) to prevent runtime errors.
 
 ### Step 2: Test the Root Endpoint
 **Action**: Open a browser and navigate to:
@@ -39,9 +41,11 @@ INFO:     Application startup complete.
 ```
 
 **Screenshot Reference**: Browser showing JSON response.
+
 **Why?**
 - Confirms the FastAPI server is running (Subchapter 1.1).
 - Guides users to the OAuth endpoint.
+- Excludes references to future integrations (e.g., Shopify, introduced in Chapter 2).
 
 ### Step 3: Initiate Facebook OAuth
 **Action**: Navigate to:
@@ -50,7 +54,7 @@ INFO:     Application startup complete.
 
 **Expected Output**: Browser redirects to a Facebook OAuth dialog URL, e.g.:
 ```
-https://www.facebook.com/v19.0/dialog/oauth?client_id=your_app_id&redirect_uri=...
+https://www.facebook.com/v19.0/dialog/oauth?client_id=your_app_id&redirect_uri=http://localhost:5000/facebook/callback&scope=pages_messaging,pages_show_list,pages_manage_metadata&response_type=code&state=1751277990:Mhg1D2nYmAE:xo_PXjcazb2NsA07TvOPB5kioTgIDLZypAV3MZjyKiE=
 ```
 
 The Facebook page displays:
@@ -64,16 +68,18 @@ By continuing, messenger-gpt-shopify will receive ongoing access to the informat
 ```
 
 **Screenshot Reference**: Facebook OAuth dialog with reconnect prompt.
+
 **Why?**
-- The `/facebook/login` endpoint (Subchapter 1.1) constructs the OAuth URL with `client_id`, `redirect_uri`, scopes (`pages_messaging`, `pages_show_list`, `pages_manage_metadata`), and a state token.
+- The `/facebook/login` endpoint (Subchapter 1.1) constructs the OAuth URL with `client_id`, `redirect_uri`, scopes (`pages_messaging`, `pages_show_list`, `pages_manage_metadata`), and a state token for CSRF protection.
 - The redirect confirms authentication initiation.
+- No session cookies are used yet, as session management is introduced in Chapter 3.
 
 ### Step 4: Authorize the App
 **Action**: Click "Continue" (or “Reconnect”) on the Facebook OAuth dialog.
 
 **Expected Output**: Browser redirects to:
-- **Local**: `http://localhost:5000/facebook/callback?code=...&state=...`
-- **GitHub Codespaces**: `https://your-codespace-id-5000.app.github.dev/facebook/callback?code=AQDqeAxEI53Puc9Sv31VbkK2JwbJRKDp9vDNG99cC9mSLVDot4ahBkGVMmRYwFhQ42VzO9kYlnrHbbOiz_o_odW6wOEY-rSoDObi0QJMu4NGJeBRDIIFdfvHEGXlbsRZ-eGWHu5hQt2h1xGpgMiwFNp4jCp7I_zsargoTNW3RBC2ueKPw694UOAUenRP7jszrjQgMID_2fhuZKi7uyh3M2pykWYS7i3K71nkAmU4kFawAOzvI3_jZtpoJA9DiaeXqtOQpzOIMG4w5-HNd-bMnvz_br10_Gon08Xh7vDiFr3Ug1owSiwphEZ-_wuEGZ2D694vvBBwWv2GzNa5IWl-79zzJME7slwQ0Hw9ob8dm1f33h-CsZnbUf4F3Kjma2qI8ZI&state=1751277990%3AMhg1D2nYmAE%3Axo_PXjcazb2NsA07TvOPB5kioTgIDLZypAV3MZjyKiE%3D#_=_`
+- **Local**: `http://localhost:5000/facebook/callback?code=AQDqeAxEI53Puc9Sv31VbkK2JwbJRKDp9vDNG99cC9mSLVDot4ahBkGVMmRYwFhQ42VzO9kYlnrHbbOiz_o_odW6wOEY-rSoDObi0QJMu4NGJeBRDIIFdfvHEGXlbsRZ-eGWHu5hQt2h1xGpgMiwFNp4jCp7I_zsargoTNW3RBC2ueKPw694UOAUenRP7jszrjQgMID_2fhuZKi7uyh3M2pykWYS7i3K71nkAmU4kFawAOzvI3_jZtpoJA9DiaeXqtOQpzOIMG4w5-HNd-bMnvz_br10_Gon08Xh7vDiFr3Ug1owSiwphEZ-_wuEGZ2D694vvBBwWv2GzNa5IWl-79zzJME7slwQ0Hw9ob8dm1f33h-CsZnbUf4F3Kjma2qI8ZI&state=1751277990%3AMhg1D2nYmAE%3Axo_PXjcazb2NsA07TvOPB5kioTgIDLZypAV3MZjyKiE%3D#_=_`
+- **GitHub Codespaces**: `https://your-codespace-id-5000.app.github.dev/facebook/callback?code=...&state=...`
 
 Browser displays JSON response:
 ```json
@@ -120,9 +126,11 @@ Browser displays JSON response:
 ```
 
 **Screenshot Reference**: Browser showing JSON response.
+
 **Why?**
 - Authorizing grants scopes, allowing access to Pages and Messenger APIs.
-- The `/facebook/callback` endpoint validates the state token and returns non-sensitive page data.
+- The `/facebook/callback` endpoint (Subchapter 1.1) validates the state token, stores tokens in `os.environ`, and returns non-sensitive page data.
+- No session management or UUIDs are included yet, as they are introduced in Chapter 3.
 
 ### Step 5: Verify the Integration
 **Action**: Review the JSON response to ensure:
@@ -134,12 +142,15 @@ Browser displays JSON response:
 - Response matches the example above.
 - Server logs show HTTP 200 responses:
 ```
+INFO:     127.0.0.1:12345 - "GET /facebook/login HTTP/1.1" 307 Temporary Redirect
 INFO:     127.0.0.1:12345 - "GET /facebook/callback?code=...&state=... HTTP/1.1" 200 OK
 ```
 
 **Screenshot Reference**: Terminal logs showing successful request handling.
+
 **Why?**
 - Verifies secure authentication and data retrieval for the sales bot.
+- Confirms tokens are stored in `os.environ` (persistent storage in Chapter 3).
 
 ### Step 6: Troubleshooting Common Issues
 If issues arise, check:
@@ -147,7 +158,8 @@ If issues arise, check:
 - **“Invalid state token”**: Verify `STATE_TOKEN_SECRET` in `.env` (Subchapter 1.1).
 - **No pages in response**: Confirm user has admin access to a business page and app is in Development Mode (Subchapter 1.2).
 - **404 or 500 errors**: Verify server is running and Codespaces URL is accessible.
-- **“Invalid App ID”**: Check `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` in `.env` (Subchapter 1.2).
+- **“Invalid App ID”**: Check `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` in `.env` against portal values (Subchapter 1.2).
+- **“Missing environment variables”**: Ensure all required variables are set in `.env` (Subchapter 1.1).
 
 **Why?**
 - Ensures a functional OAuth flow, addressing setup errors.
@@ -159,13 +171,16 @@ Customer: I’m looking for snowboards.
 Bot: Welcome to Fast Online Store PH, your verified footwear store in Manila! Contact us at contact@faststoreph.com or +63 2 1234 5678!
 ```
 
+**Why?**
+- Demonstrates how page data supports bot functionality, with full integration in later chapters.
+
 ### Summary: Why This Subchapter Matters
-- **Server Verification**: Confirms FastAPI setup (Subchapter 1.1).
-- **OAuth Flow**: Tests authentication with Facebook’s API (Subchapter 1.2).
+- **Server Verification**: Confirms FastAPI setup and environment validation (Subchapter 1.1).
+- **OAuth Flow**: Tests authentication with Facebook’s API using credentials from Subchapter 1.2.
 - **Callback Success**: Verifies OAuth logic and non-sensitive page data retrieval.
-- **Security**: Excludes tokens from responses.
-- **Bot Readiness**: Prepares the bot for Messenger interactions.
+- **Security**: Excludes tokens from responses, stores them in `os.environ` (persistent storage in Chapter 3).
+- **Bot Readiness**: Prepares the bot for Messenger interactions, with further integrations in later chapters.
 
 ### Next Steps:
 - Review Subchapter 1.1 or 1.2 if issues arise.
-- Proceed to Chapter 2 for additional Facebook integration features.
+- Proceed to Chapter 2 for additional integrations.

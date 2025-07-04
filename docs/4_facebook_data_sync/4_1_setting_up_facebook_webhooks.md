@@ -2,19 +2,20 @@
 ## Subchapter 4.1: Setting Up Facebook Webhooks for Real-Time Updates
 
 ### Introduction
-Facebook webhooks enable real-time notifications for page events (e.g., changes to page name or category) to keep the GPT Messenger sales bot’s data up-to-date. This subchapter sets up a secure webhook endpoint in the FastAPI application, integrating HMAC verification and registering webhooks during the OAuth flow with appropriate permissions (`pages_show_list`, `pages_manage_metadata`). The webhook system uses the UUID from the session-based mechanism (Chapter 3) to identify the user and temporarily stores data in a file-based structure (`facebook/<page_id>/page_data.json`), preparing for cloud storage in a later chapter. The focus is on non-sensitive metadata, ensuring secure data handling without exposing access tokens.
+Facebook webhooks enable real-time notifications for page events (e.g., changes to page name or category) to keep the GPT Messenger sales bot’s data up-to-date. This subchapter sets up a secure webhook endpoint in the FastAPI application, integrating HMAC verification and registering webhooks during the OAuth flow with appropriate permissions (`pages_show_list`, `pages_manage_metadata`). The webhook system uses the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user and temporarily stores data in a file-based structure (`facebook/<page_id>/page_data.json`), preparing for cloud storage in Chapter 6. The focus is on non-sensitive metadata, using `TokenStorage` and `SessionStorage` for secure, persistent data management.
 
 ### Prerequisites
-- Completed Chapters 1–3 (Facebook OAuth, Shopify OAuth, UUID/session management).
+- Completed Chapters 1–3 (Facebook OAuth, Shopify OAuth, Persistent Storage and User Identification).
 - FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment (e.g., GitHub Codespaces).
-- Facebook API credentials (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_REDIRECT_URI`) set in `.env` (Chapter 1).
-- A `session_id` cookie set by Shopify OAuth (Chapter 3) to retrieve the UUID.
+- Facebook API credentials (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_REDIRECT_URI`) and `STATE_TOKEN_SECRET` set in `.env` (Chapter 1).
+- `session_id` cookie set by Shopify OAuth (Chapter 3).
+- SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
 - A publicly accessible webhook URL for testing (e.g., via ngrok).
 
 ---
 
 ### Step 1: Configure Environment Variables
-Update the `.env` file to include webhook-specific variables for Facebook, in addition to the OAuth credentials from Chapters 1 and 2.
+Update the `.env` file to include webhook-specific variables for Facebook, in addition to the OAuth credentials from Chapters 1–3.
 
 **Updated `.env.example`**:
 ```plaintext
@@ -46,9 +47,10 @@ STATE_TOKEN_SECRET=replace_with_secure_token
 **Why?**
 - Authenticates the OAuth flow and secures webhook verification.
 - Prepares for webhook registration and event processing.
+- Excludes Spaces variables (introduced in Chapter 6).
 
 ### Step 2: Update Project Structure
-The project structure builds on Chapters 1–3, including `shared/session.py` for session-based UUID retrieval:
+The project structure builds on Chapters 1–3:
 ```
 .
 ├── app.py
@@ -62,7 +64,8 @@ The project structure builds on Chapters 1–3, including `shared/session.py` fo
 │   └── utils.py
 ├── shared/
 │   ├── __init__.py
-│   ├── session.py
+│   ├── sessions.py
+│   ├── tokens.py
 │   └── utils.py
 ├── .env
 ├── .env.example
@@ -73,13 +76,12 @@ The project structure builds on Chapters 1–3, including `shared/session.py` fo
 ```
 
 **Why?**
-- `facebook_integration/` contains webhook routes and utilities.
-- `shared/session.py` manages session IDs for UUID retrieval, supporting multiple users.
-- `shared/utils.py` provides CSRF protection with UUID support from Chapter 3.
-- Modular design supports future integrations.
+- `facebook_integration/` contains webhook routes and utilities, using `TokenStorage` and `SessionStorage`.
+- `shared/sessions.py` and `shared/tokens.py` manage persistent sessions and tokens (Chapter 3).
+- Excludes Spaces integration (Chapter 6).
 
 ### Step 3: Update `facebook_integration/utils.py`
-Add utility functions for webhook verification and registration, building on the OAuth functions from Chapter 1.
+Add utility functions for webhook verification and registration, using `TokenStorage`.
 
 ```python
 import os
@@ -87,7 +89,9 @@ import httpx
 import hmac
 import hashlib
 from fastapi import HTTPException, Request
-import json
+from shared.tokens import TokenStorage
+
+token_storage = TokenStorage()
 
 async def exchange_code_for_token(code: str):
     url = "https://graph.facebook.com/v19.0/oauth/access_token"
@@ -158,9 +162,11 @@ async def get_existing_subscriptions(page_id: str, access_token: str):
 - **Webhook Verification**: Validates incoming webhook events with HMAC.
 - **Webhook Registration**: Subscribes to `name,category` events during OAuth.
 - **Existing Subscriptions**: Prevents duplicate subscriptions.
+- **TokenStorage**: Initialized for future use (e.g., polling in Subchapter 4.2).
+- **No Storage**: Webhook data storage is handled in `routes.py`.
 
 ### Step 4: Update `facebook_integration/routes.py`
-Update the OAuth flow to register webhooks and add a webhook endpoint, using the UUID from the session to store data temporarily.
+Update the OAuth flow to register webhooks, add a webhook endpoint, and use `TokenStorage` and `SessionStorage` with temporary file storage.
 
 ```python
 import os
@@ -172,10 +178,13 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions
 from shared.utils import generate_state_token, validate_state_token
-from shared.session import get_uuid, clear_session
+from shared.sessions import SessionStorage
+from shared.tokens import TokenStorage
 import httpx
 
 router = APIRouter()
+token_storage = TokenStorage()
+session_storage = SessionStorage()
 
 @router.get("/login")
 async def start_oauth(request: Request):
@@ -192,7 +201,7 @@ async def start_oauth(request: Request):
     session_id = request.cookies.get("session_id")
     if not session_id:
         raise HTTPException(status_code=400, detail="Missing session_id cookie")
-    user_uuid = get_uuid(session_id)
+    user_uuid = session_storage.get_uuid(session_id)
     if not user_uuid:
         raise HTTPException(status_code=400, detail="Invalid or expired session")
 
@@ -220,20 +229,20 @@ async def oauth_callback(request: Request):
 
     session_id = request.cookies.get("session_id")
     if session_id:
-        clear_session(session_id)
+        session_storage.clear_session(session_id)
 
     token_data = await exchange_code_for_token(code)
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
-    os.environ["FACEBOOK_USER_ACCESS_TOKEN"] = token_data["access_token"]
+    token_storage.store_token("FACEBOOK_USER_ACCESS_TOKEN", token_data["access_token"], type="token")
 
     pages = await get_facebook_data(token_data["access_token"])
 
     for page in pages.get("data", []):
         page_id = page["id"]
-        os.environ[f"FACEBOOK_ACCESS_TOKEN_{page_id}"] = page["access_token"]
-        os.environ[f"PAGE_UUID_{page_id}"] = user_uuid
+        token_storage.store_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}", page["access_token"], type="token")
+        token_storage.store_token(f"PAGE_UUID_{page_id}", user_uuid, type="uuid")
 
         existing_subscriptions = await get_existing_subscriptions(page_id, page["access_token"])
         if not any("name" in sub.get("subscribed_fields", []) for sub in existing_subscriptions):
@@ -253,7 +262,7 @@ async def oauth_callback(request: Request):
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            f"http://localhost:5000/facebook/webhook",
+            f"{os.getenv('FACEBOOK_WEBHOOK_ADDRESS', 'http://localhost:5000/facebook/webhook')}",
             headers={
                 "X-Hub-Signature": hmac_signature,
                 "Content-Type": "application/json"
@@ -291,13 +300,12 @@ async def facebook_webhook(request: Request):
         if not page_id:
             continue
 
-        access_token_key = f"FACEBOOK_ACCESS_TOKEN_{page_id}"
-        access_token = os.getenv(access_token_key)
+        access_token = token_storage.get_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}")
         if not access_token:
             print(f"Access token not found for page {page_id}")
             continue
 
-        user_uuid = os.getenv(f"PAGE_UUID_{page_id}")
+        user_uuid = token_storage.get_token(f"PAGE_UUID_{page_id}")
         if not user_uuid:
             print(f"User UUID not found for page {page_id}")
             continue
@@ -327,10 +335,11 @@ async def verify_webhook_subscription(request: Request):
 ```
 
 **Why?**
-- **Login Endpoint**: Retrieves the UUID from the `session_id` cookie (Chapter 3), passing it via the state token.
-- **Callback Endpoint**: Registers webhooks, tests the webhook endpoint, stores data in `facebook/<page_id>/page_data.json`, and returns non-sensitive page data with `user_uuid` and `webhook_test`.
-- **Webhook Endpoint**: Processes `name,category` events, storing updates in `facebook/<page_id>/page_data.json` using the UUID.
-- **Security**: Excludes tokens from responses, uses HMAC verification, and clears sessions.
+- **Login Endpoint**: Uses `SessionStorage` to retrieve the UUID from the `session_id` cookie (Chapter 3).
+- **Callback Endpoint**: Registers webhooks, tests the webhook endpoint, stores data in `facebook/<page_id>/page_data.json`, uses `TokenStorage` for tokens/UUIDs, and returns non-sensitive page data with `user_uuid` and `webhook_test`.
+- **Webhook Endpoint**: Processes `name,category` events, storing updates in temporary files using `TokenStorage` for token/UUID retrieval.
+- **Security**: Excludes tokens, uses HMAC verification, clears sessions.
+- **Temporary Storage**: Prepares for cloud storage in Chapter 6.
 
 ### Step 5: Configure Webhook in Facebook Developer Portal
 **Action**: Set up the webhook in the Meta Developer Portal:
@@ -346,26 +355,44 @@ async def verify_webhook_subscription(request: Request):
 **Expected Output**: The portal confirms webhook verification.
 
 **Screenshot Reference**: Webhooks settings page showing the “Page” webhook, Callback URL, and Verify Token fields.
+
 **Why?**
 - Configures Facebook to send real-time events to `/facebook/webhook`.
 - Requires `pages_manage_metadata` permission.
 - Ngrok ensures local testing accessibility.
+- Uses `FACEBOOK_WEBHOOK_ADDRESS` for flexibility.
 
 ### Step 6: Update `requirements.txt`
-Ensure dependencies support webhooks.
+Add `cryptography` for session/token encryption.
 
 ```plaintext
 fastapi
 uvicorn
 httpx
 python-dotenv
+cryptography
 ```
 
 **Why?**
-- No additional dependencies needed beyond Chapters 1–3.
-- `httpx` supports async webhook requests.
+- `cryptography` supports `TokenStorage` and `SessionStorage` (Chapter 3).
+- Excludes `apscheduler` and `boto3` (introduced in Subchapter 4.2 and Chapter 6).
+- Supports OAuth and webhooks.
 
-### Step 7: Testing Preparation
+### Step 7: Update `.gitignore`
+Ensure SQLite databases are excluded.
+
+```plaintext
+__pycache__/
+*.pyc
+.env
+.DS_Store
+*.db
+```
+
+**Why?**
+- Excludes `tokens.db` and `sessions.db` to prevent committing sensitive data.
+
+### Step 8: Testing Preparation
 To verify the webhook setup:
 1. Update `.env` with `FACEBOOK_WEBHOOK_ADDRESS` and `FACEBOOK_VERIFY_TOKEN`.
 2. Install dependencies: `pip install -r requirements.txt`.
@@ -376,10 +403,10 @@ To verify the webhook setup:
 
 ### Summary: Why This Subchapter Matters
 - **Real-Time Updates**: Webhooks keep page metadata current for the sales bot.
-- **Security**: HMAC verification and session-based UUID retrieval ensure secure, multi-user operation.
+- **Security**: HMAC verification, `TokenStorage`, and `SessionStorage` ensure secure, multi-user operation.
 - **UUID Integration**: Links data using the UUID from Chapter 3.
 - **Scalability**: Async processing supports high traffic.
-- **Temporary Storage**: Prepares for cloud storage in a later chapter.
+- **Temporary Storage**: Prepares for cloud storage in Chapter 6.
 
 ### Next Steps:
 - Implement daily polling for redundancy (Subchapter 4.2).

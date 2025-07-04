@@ -2,29 +2,25 @@
 ## Subchapter 4.3: Testing Facebook Webhooks and Polling
 
 ### Introduction
-With the Facebook webhooks and polling systems set up in Subchapters 4.1 and 4.2, this subchapter verifies their functionality through integrated tests within the OAuth flow. After successful authentication, the FastAPI application automatically tests the webhook endpoint and polling mechanism for each authenticated page, using the UUID from the session-based mechanism (Chapter 3) to identify the user. Data is temporarily stored in a file-based structure (`facebook/<page_id>/page_data.json`), and tests return consistent JSON results to confirm functionality. This ensures the GPT Messenger sales bot can reliably fetch and process non-sensitive page metadata.
+With Facebook webhooks and polling set up in Subchapters 4.1 and 4.2, this subchapter verifies their functionality through integrated tests within the OAuth flow. After successful authentication, the FastAPI application tests the webhook endpoint and polling mechanism for each authenticated page, using the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user. Data is temporarily stored in `facebook/<page_id>/page_data.json`, and tests return consistent JSON results to confirm functionality. This ensures the GPT Messenger sales bot can reliably fetch and process non-sensitive page metadata using `TokenStorage` and `SessionStorage`.
 
 ### Prerequisites
-- Completed Chapters 1–3 (Facebook OAuth, Shopify OAuth, UUID/session management).
+- Completed Chapters 1–3 and Subchapters 4.1–4.2.
 - FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment.
-- Facebook API credentials (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_REDIRECT_URI`, `FACEBOOK_WEBHOOK_ADDRESS`, `FACEBOOK_VERIFY_TOKEN`) set in `.env`.
+- Facebook API credentials (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_REDIRECT_URI`, `FACEBOOK_WEBHOOK_ADDRESS`, `FACEBOOK_VERIFY_TOKEN`) and `STATE_TOKEN_SECRET` set in `.env`.
 - `apscheduler` installed (`pip install apscheduler`).
 - `session_id` cookie set by Shopify OAuth (Chapter 3).
-- Page access tokens (`FACEBOOK_ACCESS_TOKEN_<page_id>`) and UUID mappings (`PAGE_UUID_<page_id>`) stored in the environment.
+- SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
 
 ---
 
 ### Step 1: Test via OAuth Flow
-The tests for webhooks and polling are executed during the OAuth callback, using the session ID cookie to retrieve the UUID.
+The tests for webhooks and polling are executed during the OAuth callback, using the `session_id` cookie to retrieve the UUID.
 
 **Instructions**:
 1. Run the app:
    ```bash
    python app.py
-   ```
-   or
-   ```bash
-   uvicorn app:app --reload
    ```
 2. Complete Shopify OAuth (Chapter 2) to set the `session_id` cookie:
    ```
@@ -43,7 +39,7 @@ The tests for webhooks and polling are executed during the OAuth callback, using
 **Expected Output**:
 - The browser redirects to the callback endpoint, e.g.:
   ```
-  http://localhost:5000/facebook/callback?code=<code>&state=1751277990%3AMhg1D2nYmAE%3A550e8400-e29b-41d4-a716-446655440000%3Axo_PXjcazb2NsA07TvOPB5kioTgIDLZypAV3MZjyKiE%3D#_=_
+  http://localhost:5000/facebook/callback?code=AQDqeAxEI53Puc9Sv31VbkK2JwbJRKDp9vDNG99cC9mSLVDot4ahBkGVMmRYwFhQ42VzO9kYlnrHbbOiz_o_odW6wOEY-rSoDObi0QJMu4NGJeBRDIIFdfvHEGXlbsRZ-eGWHu5hQt2h1xGpgMiwFNp4jCp7I_zsargoTNW3RBC2ueKPw694UOAUenRP7jszrjQgMID_2fhuZKi7uyh3M2pykWYS7i3K71nkAmU4kFawAOzvI3_jZtpoJA9DiaeXqtOQpzOIMG4w5-HNd-bMnvz_br10_Gon08Xh7vDiFr3Ug1owSiwphEZ-_wuEGZ2D694vvBBwWv2GzNa5IWl-79zzJME7slwQ0Hw9ob8dm1f33h-CsZnbUf4F3Kjma2qI8ZI&state=1751277990%3AMhg1D2nYmAE%3A550e8400-e29b-41d4-a716-446655440000%3Axo_PXjcazb2NsA07TvOPB5kioTgIDLZypAV3MZjyKiE%3D#_=_
   ```
 - The browser displays a JSON response:
   ```json
@@ -104,7 +100,8 @@ The tests for webhooks and polling are executed during the OAuth callback, using
   INFO:     127.0.0.1:32930 - "POST /facebook/webhook HTTP/1.1" 200 OK
   Webhook test result: {'status': 'success'}
   Polling test result for page 101368371725791: {'status': 'success'}
-  INFO:     127.0.0.1:0 - "GET /facebook/callback?code=...&state=1751524486%3AuVmqs9pr6gI%3A550e8400-e29b-41d4-a716-446655440000%3AuIVcMQV9UAqWPqQMndy-cWbi8913FNdQQLLi8_6v8_8%3D HTTP/1.1" 200 OK
+  Wrote data to facebook/101368371725791/page_data.json for page 101368371725791
+  INFO:     127.0.0.1:0 - "GET /facebook/callback?code=...&state=... HTTP/1.1" 200 OK
   ```
 
 **What to Look For**:
@@ -115,9 +112,10 @@ The tests for webhooks and polling are executed during the OAuth callback, using
 - **Errors**: If `webhook_test` or `polling_test` shows `{"status": "error", "message": "..."}`, check the `message`.
 
 **Screenshot Reference**: Browser showing JSON response; terminal showing logs.
+
 **Why?**
-- Confirms webhook and polling functionality using the UUID from the session.
-- Ensures non-sensitive data for the sales bot.
+- Confirms webhook and polling functionality using `TokenStorage` and `SessionStorage`.
+- Ensures non-sensitive data for the sales bot, stored temporarily.
 
 ### Step 2: Verify Webhook Functionality
 **Action**: Simulate a page metadata change to test the webhook endpoint.
@@ -134,8 +132,8 @@ The tests for webhooks and polling are executed during the OAuth callback, using
   ```
 
 **Why?**
-- Verifies the `/facebook/webhook` endpoint (Subchapter 4.1) processes `name` or `category` changes.
-- Confirms data is stored in `facebook/<page_id>/page_data.json`.
+- Verifies the `/facebook/webhook` endpoint (Subchapter 4.1) processes `name,category` events using `TokenStorage`.
+- Confirms data is stored in temporary files.
 
 ### Step 3: Verify Polling Functionality
 **Action**: Manually trigger the daily polling function.
@@ -157,8 +155,8 @@ The tests for webhooks and polling are executed during the OAuth callback, using
   ```
 
 **Why?**
-- Confirms `poll_facebook_data` (Subchapter 4.2) retrieves data using the UUID.
-- Ensures the daily poll works.
+- Confirms `poll_facebook_data` (Subchapter 4.2) retrieves data using `TokenStorage`.
+- Ensures the daily poll works with temporary file storage.
 
 ### Step 4: Verify Temporary File Storage
 **Action**: Check the temporary file storage for page data.
@@ -183,7 +181,7 @@ The tests for webhooks and polling are executed during the OAuth callback, using
 ```
 
 **Why?**
-- Confirms data is stored correctly using the UUID-based structure, preparing for cloud storage in a later chapter.
+- Confirms data is stored correctly using the UUID-based structure, preparing for cloud storage in Chapter 6.
 
 ### Step 5: Troubleshoot Issues
 **Action**: If the JSON response or logs show failures, diagnose and fix issues.
@@ -200,7 +198,7 @@ The tests for webhooks and polling are executed during the OAuth callback, using
    - **Cause**: Failed to fetch page data.
    - **Fix**:
      - Check the `message` (e.g., “User access token not found”).
-     - Verify `FACEBOOK_ACCESS_TOKEN_<page_id>` and `PAGE_UUID_<page_id>` in the environment.
+     - Verify tokens in `tokens.db` using `sqlite3 /app/data/tokens.db "SELECT key FROM tokens;"`.
      - Check logs for API errors (e.g., HTTP 400 or 429).
 3. **Missing `session_id` Cookie**:
    - **Cause**: Shopify OAuth (Chapter 2) not completed.
@@ -221,8 +219,8 @@ The tests for webhooks and polling are executed during the OAuth callback, using
 - Uses JSON responses and logs to debug webhook, polling, or session issues.
 
 ### Summary: Why This Subchapter Matters
-- **Functionality Verification**: Tests confirm webhook and polling systems work, using the UUID from the session.
-- **Security**: Excludes sensitive tokens and validates sessions.
+- **Functionality Verification**: Tests confirm webhook and polling systems work, using `TokenStorage` and `SessionStorage`.
+- **Security**: Excludes sensitive tokens, validates sessions, and uses encrypted storage.
 - **Comprehensive Data**: Stores non-sensitive page metadata for the sales bot.
 - **Bot Readiness**: Ensures up-to-date data for customer interactions.
 

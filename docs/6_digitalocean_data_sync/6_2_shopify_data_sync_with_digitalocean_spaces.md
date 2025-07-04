@@ -2,52 +2,25 @@
 ## Subchapter 6.2: Shopify Data Sync with DigitalOcean Spaces
 
 ### Introduction
-This subchapter integrates DigitalOcean Spaces to store Shopify shop and product data for the GPT Messenger sales bot, replacing the temporary file storage (`<shop_name>/shopify_data.json`) from Chapter 5 with a UUID-based bucket structure (`users/<uuid>/shopify/shopify_data.json`). The webhook and polling systems (Subchapters 5.1 and 5.2) are updated to use Spaces, leveraging the UUID from the session-based mechanism (Chapter 3). This ensures secure, scalable storage for multiple users, maintaining non-sensitive data for the sales bot’s recommendations.
+This subchapter transitions the temporary file storage (`<shop_name>/shopify_data.json`) from Chapter 5 to DigitalOcean Spaces for persistent, scalable storage of Shopify shop and product data. We update the webhook and polling mechanisms to upload non-sensitive data to Spaces (`users/<uuid>/shopify/<shop_name>/shopify_data.json`) using the UUID from `TokenStorage` (Chapter 3). The implementation uses `boto3` for S3-compatible storage, ensuring secure, production-ready data management with `TokenStorage` and `SessionStorage`.
 
 ### Prerequisites
 - Completed Chapters 1–5 and Subchapter 6.1.
-- FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment.
-- Shopify API credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`, `SHOPIFY_WEBHOOK_ADDRESS`) set in `.env`.
-- `session_id` cookie set by Shopify OAuth (Chapter 3).
-- Shop access tokens (`SHOPIFY_ACCESS_TOKEN_<shop_key>`) and UUID mappings (`USER_UUID_<shop_key>`) stored in the environment.
-- DigitalOcean Spaces credentials and bucket set up (Subchapter 6.3).
-- `boto3` installed (`pip install boto3`).
+- FastAPI application running on a DigitalOcean Droplet or locally.
+- SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
+- DigitalOcean Spaces bucket and credentials configured (Subchapter 6.3).
+- Environment variables for Spaces and OAuth set in `.env`.
 
 ---
 
-### Step 1: Configure Environment Variables
-Use the `.env` from Subchapter 6.1, which includes Spaces credentials.
+### Step 1: Why DigitalOcean Spaces for Shopify?
+Spaces provides:
+- Scalable storage for shop, product, discount, and collection data.
+- Persistent storage for multiple users, organized by UUID.
+- Integration with webhook and polling systems (Chapter 5).
+- Preparation for backups in Chapter 7.
 
-**`.env.example`**:
-```plaintext
-# Facebook OAuth credentials
-FACEBOOK_APP_ID=your_facebook_app_id
-FACEBOOK_APP_SECRET=your_facebook_app_secret
-FACEBOOK_REDIRECT_URI=http://localhost:5000/facebook/callback
-FACEBOOK_WEBHOOK_ADDRESS=https://your-app.com/facebook/webhook
-FACEBOOK_VERIFY_TOKEN=your_verify_token
-# Shopify OAuth credentials
-SHOPIFY_API_KEY=your_shopify_api_key
-SHOPIFY_API_SECRET=your_shopify_api_secret
-SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
-SHOPIFY_WEBHOOK_ADDRESS=https://your-app.com/shopify/webhook
-# Shared secret for state token CSRF protection
-STATE_TOKEN_SECRET=replace_with_secure_token
-# DigitalOcean Spaces credentials
-SPACES_ACCESS_KEY=your_access_key
-SPACES_SECRET_KEY=your_secret_key
-SPACES_BUCKET=your_bucket_name
-SPACES_REGION=nyc3
-```
-
-**Notes**:
-- No additional variables needed beyond Subchapter 6.1.
-- **Production Note**: Ensure secure credentials and HTTPS for webhook addresses.
-
-**Why?**
-- Enables storage of Shopify data in Spaces using the UUID-based structure.
-
-### Step 2: Project Structure
+### Step 2: Update Project Structure
 The project structure remains as defined in Subchapter 6.1:
 ```
 .
@@ -60,12 +33,10 @@ The project structure remains as defined in Subchapter 6.1:
 │   ├── __init__.py
 │   ├── routes.py
 │   └── utils.py
-├── digitalocean_integration/
-│   ├── __init__.py
-│   └── utils.py
 ├── shared/
 │   ├── __init__.py
-│   ├── session.py
+│   ├── sessions.py
+│   ├── tokens.py
 │   └── utils.py
 ├── .env
 ├── .env.example
@@ -76,23 +47,26 @@ The project structure remains as defined in Subchapter 6.1:
 ```
 
 **Why?**
-- `digitalocean_integration/utils.py` provides Spaces functions (Subchapter 6.1).
-- `shopify_integration/` handles Shopify data sync.
-- `shared/session.py` supports session-based UUID retrieval.
+- `shopify_integration/` updates webhook and polling to use Spaces.
+- `shared/tokens.py` and `shared/sessions.py` provide persistent storage.
 
 ### Step 3: Update `shopify_integration/utils.py`
-Update polling to use Spaces with the `users/` prefix instead of temporary file storage.
+Update polling to upload data to Spaces using `TokenStorage`.
 
 ```python
 import os
 import httpx
-import asyncio
+import json
+from fastapi import HTTPException, Request
+import hmac
 import hashlib
 import base64
-import hmac
-from fastapi import HTTPException, Request
+import asyncio
 import boto3
-from digitalocean_integration.utils import has_data_changed, upload_to_spaces
+from botocore.exceptions import ClientError
+from shared.tokens import TokenStorage
+
+token_storage = TokenStorage()
 
 async def exchange_code_for_token(code: str, shop: str):
     url = f"https://{shop}/admin/oauth/access_token"
@@ -199,157 +173,136 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
             await asyncio.sleep(2 ** attempt)
 
 async def verify_hmac(request: Request) -> bool:
-    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
-    if not hmac_header:
+    hmac_signature = request.headers.get("X-Shopify-Hmac-Sha256")
+    if not hmac_signature:
         return False
     body = await request.body()
     secret = os.getenv("SHOPIFY_API_SECRET")
-    expected_hmac = hmac.new(secret.encode(), body, hashlib.sha256).digest()
-    expected_hmac_b64 = base64.b64encode(expected_hmac).decode()
-    return hmac.compare_digest(hmac_header, expected_hmac_b64)
+    computed_hmac = base64.b64encode(
+        hmac.new(secret.encode(), body, hashlib.sha256).digest()
+    ).decode()
+    return hmac.compare_digest(hmac_signature, computed_hmac)
 
 async def register_webhooks(shop: str, access_token: str):
-    webhook_topics = [
-        "products/create",
-        "products/update",
-        "products/delete",
-        "inventory_levels/update",
-        "discounts/create",
-        "discounts/update",
-        "discounts/delete",
-        "collections/create",
-        "collections/update",
-        "collections/delete"
-    ]
+    url = f"https://{shop}/admin/api/2025-04/webhooks.json"
+    headers = {"X-Shopify-Access-Token": access_token, "Content-Type": "application/json"}
     webhook_address = os.getenv("SHOPIFY_WEBHOOK_ADDRESS")
     if not webhook_address:
         raise HTTPException(status_code=500, detail="SHOPIFY_WEBHOOK_ADDRESS not set")
-
-    existing_webhooks = await get_existing_webhooks(shop, access_token)
-    for topic in webhook_topics:
-        if not any(w["topic"] == topic for w in existing_webhooks):
-            await register_webhook(shop, access_token, topic, webhook_address)
-        else:
-            print(f"Webhook for {topic} already exists for {shop}")
-
-async def get_existing_webhooks(shop: str, access_token: str):
-    url = f"https://{shop}/admin/api/2025-04/webhooks.json"
-    headers = {"X-Shopify-Access-Token": access_token}
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
-        return response.json().get("webhooks", [])
-
-async def register_webhook(shop: str, access_token: str, topic: str, address: str):
-    url = f"https://{shop}/admin/api/2025-04/webhooks.json"
-    headers = {
-        "X-Shopify-Access-Token": access_token,
-        "Content-Type": "application/json"
-    }
-    payload = {
+    data = {
         "webhook": {
-            "topic": topic,
-            "address": address,
+            "topic": "products/update",
+            "address": webhook_address,
             "format": "json"
         }
     }
     async with httpx.AsyncClient() as client:
-        response = await client.post(url, headers=headers, json=payload)
+        response = await client.post(url, headers=headers, json=data)
         if response.status_code == 201:
-            print(f"Webhook registered for {topic} at {shop}")
+            print(f"Webhook registered for {shop}: products/update")
         else:
-            print(f"Failed to register webhook for {topic} at {shop}: {response.text}")
+            print(f"Failed to register webhook for {shop}: {response.text}")
 
-async def poll_shopify_data(access_token: str, shop: str) -> dict:
+def upload_to_spaces(data: dict, object_key: str):
+    session = boto3.session.Session()
+    client = session.client(
+        "s3",
+        region_name=os.getenv("SPACES_REGION"),
+        endpoint_url=os.getenv("SPACES_ENDPOINT"),
+        aws_access_key_id=os.getenv("SPACES_KEY"),
+        aws_secret_access_key=os.getenv("SPACES_SECRET")
+    )
     try:
-        await get_shopify_data(access_token, shop)
+        client.put_object(
+            Bucket=os.getenv("SPACES_BUCKET"),
+            Key=object_key,
+            Body=json.dumps(data),
+            ContentType="application/json",
+            ACL="private"
+        )
+        print(f"Uploaded data to Spaces: {object_key}")
+    except ClientError as e:
+        print(f"Failed to upload to Spaces: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Spaces upload failed: {str(e)}")
+
+async def poll_shopify_data(access_token: str, shop: str):
+    try:
+        shopify_data = await get_shopify_data(access_token, shop)
+        shop_key = shop.replace('.', '_')
+        user_uuid = token_storage.get_token(f"USER_UUID_{shop_key}")
+        if not user_uuid:
+            return {"status": "error", "message": f"User UUID not found for shop {shop}"}
+        upload_to_spaces(shopify_data, f"users/{user_uuid}/shopify/{shop}/shopify_data.json")
         return {"status": "success"}
     except Exception as e:
+        print(f"Failed to poll data for {shop}: {str(e)}")
         return {"status": "error", "message": str(e)}
 
 async def daily_poll():
     shops = [
         key.replace("SHOPIFY_ACCESS_TOKEN_", "").replace("_", ".")
-        for key in os.environ
+        for key in token_storage.get_all_tokens_by_type("token")
         if key.startswith("SHOPIFY_ACCESS_TOKEN_")
     ]
-    
+
     for shop in shops:
         try:
             shop_key = shop.replace('.', '_')
-            access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop_key}"
-            access_token = os.getenv(access_token_key)
-            user_uuid = os.getenv(f"USER_UUID_{shop_key}")
-            if not user_uuid:
-                print(f"User UUID not found for shop {shop}")
-                continue
+            access_token = token_storage.get_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}")
             if access_token:
-                poll_result = await poll_shopify_data(access_token, shop)
-                if poll_result["status"] == "success":
-                    shopify_data = await get_shopify_data(access_token, shop)
-                    session = boto3.session.Session()
-                    s3_client = session.client(
-                        "s3",
-                        region_name=os.getenv("SPACES_REGION", "nyc3"),
-                        endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-                        aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
-                        aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
-                    )
-                    spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
-                    if has_data_changed(shopify_data, spaces_key, s3_client):
-                        upload_to_spaces(shopify_data, spaces_key, s3_client)
-                        print(f"Polled and uploaded data for {shop}: Success")
-                    else:
-                        print(f"Polled data for {shop}: No upload needed, data unchanged")
+                result = await poll_shopify_data(access_token, shop)
+                if result["status"] == "success":
+                    print(f"Polled data for shop {shop}: Success")
                 else:
-                    print(f"Polling failed for {shop}: {poll_result['message']}")
+                    print(f"Polling failed for shop {shop}: {result['message']}")
         except Exception as e:
-            print(f"Daily poll failed for {shop}: {str(e)}")
+            print(f"Daily poll failed for shop {shop}: {str(e)}")
 ```
 
 **Why?**
-- **OAuth and Webhook Functions**: Reuses functions from Chapter 5.
-- **Polling Function**: Updates `poll_shopify_data` to use Spaces with `users/<uuid>/shopify/shopify_data.json`.
-- **Daily Poll**: Iterates over shop access tokens, storing data in Spaces.
-- **Error Handling**: Returns status and messages.
+- **OAuth Functions**: Reuses token exchange and data fetching from Chapter 5.
+- **Webhook Functions**: Reuses verification and registration from Subchapter 5.1.
+- **Spaces Upload**: `upload_to_spaces` stores data in `users/<uuid>/shopify/<shop_name>/shopify_data.json`.
+- **Polling**: Updates `poll_shopify_data` to use Spaces with `TokenStorage`.
 
 ### Step 4: Update `shopify_integration/routes.py`
-Update the OAuth flow, webhook, and polling to use Spaces with the `users/` prefix.
+Update webhook and OAuth callback to use Spaces for storage.
 
 ```python
 import os
-import json
-import boto3
 import uuid
+import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, poll_shopify_data
+from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, poll_shopify_data, upload_to_spaces
 from shared.utils import generate_state_token, validate_state_token
-from shared.session import generate_session_id, store_uuid
-from digitalocean_integration.utils import has_data_changed, upload_to_spaces
+from shared.sessions import SessionStorage
+from shared.tokens import TokenStorage
+import httpx
 import hmac
 import hashlib
 import base64
-import httpx
 
 router = APIRouter()
+session_storage = SessionStorage()
+token_storage = TokenStorage()
 
 @router.get("/{shop_name}/login")
 async def start_oauth(shop_name: str):
     client_id = os.getenv("SHOPIFY_API_KEY")
     redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
-    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_products,write_inventory"
+    scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products"
 
     if not client_id or not redirect_uri:
-        raise HTTPException(status_code=500, detail="Shopify app config missing")
+        raise HTTPException(status_code=500, detail="Shopify config missing")
 
     if not shop_name.endswith(".myshopify.com"):
         shop_name = f"{shop_name}.myshopify.com"
 
     state = generate_state_token()
-
     auth_url = (
         f"https://{shop_name}/admin/oauth/authorize?"
-        f"client_id={client_id}&scope={scope}&redirect_uri={redirect_uri}&response_type=code&state={state}"
+        f"client_id={client_id}&scope={scope}&redirect_uri={redirect_uri}&state={state}"
     )
     return RedirectResponse(auth_url)
 
@@ -360,22 +313,21 @@ async def oauth_callback(request: Request):
     state = request.query_params.get("state")
 
     if not code or not shop or not state:
-        raise HTTPException(status_code=400, detail="Missing code, shop, or state parameter")
+        raise HTTPException(status_code=400, detail="Missing code/shop/state")
 
     validate_state_token(state)
-
     token_data = await exchange_code_for_token(code, shop)
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
     shop_key = shop.replace('.', '_')
-    os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop_key}"] = token_data["access_token"]
+    token_storage.store_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}", token_data["access_token"], type="token")
 
     user_uuid = str(uuid.uuid4())
-    os.environ[f"USER_UUID_{shop_key}"] = user_uuid
+    token_storage.store_token(f"USER_UUID_{shop_key}", user_uuid, type="uuid")
 
-    session_id = generate_session_id()
-    store_uuid(session_id, user_uuid)
+    session_id = session_storage.generate_session_id()
+    session_storage.store_uuid(session_id, user_uuid)
 
     webhook_test_result = {"status": "failed", "message": "Webhook registration failed"}
     try:
@@ -388,7 +340,7 @@ async def oauth_callback(request: Request):
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"http://localhost:5000/shopify/webhook",
+                f"{os.getenv('SHOPIFY_WEBHOOK_ADDRESS', 'http://localhost:5000/shopify/webhook')}",
                 headers={
                     "X-Shopify-Topic": "products/update",
                     "X-Shopify-Shop-Domain": shop,
@@ -407,44 +359,17 @@ async def oauth_callback(request: Request):
         print(f"Webhook setup failed for {shop}: {str(e)}")
 
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
+    upload_to_spaces(shopify_data, f"users/{user_uuid}/shopify/{shop}/shopify_data.json")
 
-    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop_key}"
-    access_token = os.getenv(access_token_key)
-    polling_test_result = await poll_shopify_data(access_token, shop)
+    polling_test_result = await poll_shopify_data(token_data["access_token"], shop)
     print(f"Polling test result for {shop}: {polling_test_result}")
-
-    upload_status_result = {"status": "failed", "message": "Tests failed"}
-    if (
-        webhook_test_result.get("status") == "success"
-        and polling_test_result.get("status") == "success"
-    ):
-        try:
-            session = boto3.session.Session()
-            s3_client = session.client(
-                "s3",
-                region_name=os.getenv("SPACES_REGION", "nyc3"),
-                endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-                aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
-                aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
-            )
-            spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
-            if has_data_changed(shopify_data, spaces_key, s3_client):
-                upload_to_spaces(shopify_data, spaces_key, s3_client)
-                print(f"Uploaded data to Spaces for {shop}")
-            else:
-                print(f"No upload needed for {shop}: Data unchanged")
-            upload_status_result = {"status": "success"}
-        except Exception as e:
-            upload_status_result = {"status": "failed", "message": f"Spaces upload failed: {str(e)}"}
-            print(f"Failed to upload to Spaces for {shop}: {str(e)}")
 
     response = JSONResponse(content={
         "user_uuid": user_uuid,
         "token_data": token_data,
         "shopify_data": shopify_data,
         "webhook_test": webhook_test_result,
-        "polling_test": polling_test_result,
-        "upload_status": upload_status_result
+        "polling_test": polling_test_result
     })
     response.set_cookie(key="session_id", value=session_id, httponly=True, max_age=3600)
     return response
@@ -459,12 +384,11 @@ async def shopify_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Missing shop domain")
 
     shop_key = shop.replace('.', '_')
-    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop_key}"
-    access_token = os.getenv(access_token_key)
+    access_token = token_storage.get_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}")
     if not access_token:
         raise HTTPException(status_code=500, detail="Access token not found")
 
-    user_uuid = os.getenv(f"USER_UUID_{shop_key}")
+    user_uuid = token_storage.get_token(f"USER_UUID_{shop_key}")
     if not user_uuid:
         raise HTTPException(status_code=500, detail="User UUID not found for shop")
 
@@ -474,50 +398,53 @@ async def shopify_webhook(request: Request):
 
     try:
         shopify_data = await get_shopify_data(access_token, shop)
-        session = boto3.session.Session()
-        s3_client = session.client(
-            "s3",
-            region_name=os.getenv("SPACES_REGION", "nyc3"),
-            endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-            aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
-            aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
-        )
-        spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
-        if has_data_changed(shopify_data, spaces_key, s3_client):
-            upload_to_spaces(shopify_data, spaces_key, s3_client)
-            print(f"Updated data in Spaces for {shop} via {event_type}")
-        else:
-            print(f"No update needed in Spaces for {shop} via {event_type}: Data unchanged")
+        upload_to_spaces(shopify_data, f"users/{user_uuid}/shopify/{shop}/shopify_data.json")
     except Exception as e:
-        print(f"Failed to update Spaces for {shop} via {event_type}: {str(e)}")
+        print(f"Failed to upload data for {shop}: {str(e)}")
 
     return {"status": "success"}
 ```
 
 **Why?**
-- **Login Endpoint**: Uses the `session_id` cookie to retrieve the UUID (Chapter 3).
-- **Callback Endpoint**: Tests polling and webhooks, uploads to Spaces with `users/` prefix, and returns results with `user_uuid`.
-- **Webhook Endpoint**: Processes `products/update` events, storing updates in `users/<uuid>/shopify/shopify_data.json`.
-- **Security**: Excludes tokens, uses HMAC, and sets a secure cookie.
+- **Login Endpoint**: Initiates OAuth with scopes for products and inventory.
+- **Callback Endpoint**: Uploads data to Spaces, tests webhook and polling, and returns results.
+- **Webhook Endpoint**: Processes `products/update` events, uploading to Spaces with `TokenStorage`.
+- **Security**: Uses HMAC, excludes tokens, and sets a secure cookie.
 
 ### Step 5: Update `requirements.txt`
-Use the same `requirements.txt` from Subchapter 6.1.
+Ensure `boto3` is included.
 
 ```plaintext
 fastapi
 uvicorn
 httpx
 python-dotenv
+cryptography
 apscheduler
 boto3
 ```
 
 **Why?**
-- No additional dependencies needed.
+- `boto3` enables Spaces uploads.
+- Other dependencies support OAuth, webhooks, and polling.
 
-### Step 6: Testing Preparation
+### Step 6: Update `.gitignore`
+Ensure SQLite databases are excluded.
+
+```plaintext
+__pycache__/
+*.pyc
+.env
+.DS_Store
+*.db
+```
+
+**Why?**
+- Excludes `tokens.db` and `sessions.db`.
+
+### Step 7: Testing Preparation
 To verify Spaces integration:
-1. Use `.env` from Subchapter 6.1.
+1. Update `.env` with Spaces credentials (Subchapter 6.3).
 2. Install dependencies: `pip install -r requirements.txt`.
 3. Run the app: `python app.py`.
 4. Complete Shopify OAuth to set the `session_id` cookie.
@@ -525,11 +452,11 @@ To verify Spaces integration:
 6. Testing details are in Subchapter 6.4.
 
 ### Summary: Why This Subchapter Matters
-- **Cloud Storage**: Replaces temporary file storage with Spaces.
-- **UUID Integration**: Organizes data in `users/<uuid>/shopify/shopify_data.json`.
-- **Security**: Ensures non-sensitive data storage and session-based UUID retrieval.
-- **Scalability**: Supports multiple users in production.
+- **Persistent Storage**: Transitions Shopify data to Spaces for scalability.
+- **UUID Integration**: Organizes data by UUID for multi-platform linking.
+- **Security**: Uses `TokenStorage` and encrypted storage.
+- **Scalability**: Supports production with async processing.
 
 ### Next Steps:
-- Set up a Spaces bucket (Subchapter 6.3).
+- Set up Spaces bucket (Subchapter 6.3).
 - Test Spaces integration (Subchapter 6.4).

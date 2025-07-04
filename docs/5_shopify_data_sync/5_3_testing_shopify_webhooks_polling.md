@@ -2,29 +2,25 @@
 ## Subchapter 5.3: Testing Shopify Webhooks and Polling
 
 ### Introduction
-With Shopify webhooks and polling set up in Subchapters 5.1 and 5.2, this subchapter verifies their functionality through integrated tests within the OAuth flow. After successful authentication, the FastAPI application tests the webhook endpoint and polling mechanism for the authenticated shop, using the UUID from the session-based mechanism (Chapter 3) to identify the user. Data is stored temporarily in `<shop_name>/shopify_data.json`, and tests return consistent JSON results to confirm functionality. This ensures the GPT Messenger sales bot can reliably fetch and process non-sensitive shop and product data.
+With Shopify webhooks and polling set up in Subchapters 5.1 and 5.2, this subchapter verifies their functionality through integrated tests within the OAuth flow. After successful authentication, the FastAPI application tests the webhook endpoint and polling mechanism for the authenticated shop, using the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user. Data is stored temporarily in `<shop_name>/shopify_data.json`, and tests return consistent JSON results to confirm functionality. This ensures the GPT Messenger sales bot can reliably fetch and process non-sensitive shop and product data using `TokenStorage` and `SessionStorage`.
 
 ### Prerequisites
 - Completed Chapters 1–4 and Subchapters 5.1–5.2.
 - FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment.
-- Shopify API credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`, `SHOPIFY_WEBHOOK_ADDRESS`) set in `.env`.
+- Shopify API credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`, `SHOPIFY_WEBHOOK_ADDRESS`) and `STATE_TOKEN_SECRET` set in `.env`.
 - `apscheduler` installed (`pip install apscheduler`).
 - `session_id` cookie set by Shopify OAuth (Chapter 3).
-- Shop access tokens (`SHOPIFY_ACCESS_TOKEN_<shop_key>`) and UUID mappings (`USER_UUID_<shop_key>`) stored in the environment.
+- SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
 
 ---
 
 ### Step 1: Test via OAuth Flow
-The tests for webhooks and polling are executed during the Shopify OAuth callback, using the session ID cookie.
+The tests for webhooks and polling are executed during the Shopify OAuth callback, using the `session_id` cookie.
 
 **Instructions**:
 1. Run the app:
    ```bash
    python app.py
-   ```
-   or
-   ```bash
-   uvicorn app:app --reload
    ```
 2. Initiate Shopify OAuth:
    ```
@@ -39,9 +35,9 @@ The tests for webhooks and polling are executed during the Shopify OAuth callbac
 **Expected Output**:
 - Browser redirects to the callback endpoint, e.g.:
   ```
-  http://localhost:5000/shopify/callback?code=05a8747b43fb1d4d1595805ccf0b6db0&hmac=30c8533ffcb5280092c07c01ea4296967149c5071656d5d0bceba77c06ed9319&host=YWRtaW4uc2hvcGlmeS5jb20vc3RvcmUvYWNtZS03Y3UxOW5ncg&shop=acme-7cu19ngr.myshopify.com&state=1751278788%3A8LzrUd5Wj9I%3AtuPOjl3Z2F53YrY-hylu9OKvkYaj7uDtDbQ1MZX9nMc%3D&timestamp=1751278994
+  http://localhost:5000/shopify/callback?code=05a8747b43fb1d4d1595805ccf0b6db0&hmac=30c8533ffcb5280092c07c01ea4296967149c5071656d5d0bceba77c06ed9319&host=YWRtaW4uc2hvcGlmeS5jb20vc3RvcmUvYWNtZS03Y3UxOW5ncg&shop=acme-7cu19ngr.myshopify.com&state=1751278788%3A8LzrUd5Wj9I%3AtuPOjl3Z2F53YrY-hylu9OKvkYaj7uDtDbQ1MZX9nMc%3D×tamp=1751278994
   ```
-- Browser displays a JSON response (abridged):
+- Browser displays JSON response (abridged):
   ```json
   {
     "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
@@ -121,9 +117,10 @@ The tests for webhooks and polling are executed during the Shopify OAuth callbac
 - **Errors**: If `webhook_test` or `polling_test` shows `{"status": "failed", "message": "..."}`, check the `message`.
 
 **Screenshot Reference**: Browser showing JSON response; terminal showing logs.
+
 **Why?**
-- Confirms webhook and polling functionality using the UUID from the session.
-- Ensures non-sensitive data for the sales bot.
+- Confirms webhook and polling functionality using `TokenStorage` and `SessionStorage`.
+- Ensures non-sensitive data for the sales bot, stored temporarily.
 
 ### Step 2: Verify Webhook Functionality
 **Action**: Simulate a product update to test the webhook endpoint.
@@ -140,8 +137,8 @@ The tests for webhooks and polling are executed during the Shopify OAuth callbac
   ```
 
 **Why?**
-- Verifies the `/shopify/webhook` endpoint (Subchapter 5.1) processes `products/update` events.
-- Confirms data is stored in `<shop_name>/shopify_data.json`.
+- Verifies the `/shopify/webhook` endpoint (Subchapter 5.1) processes `products/update` events using `TokenStorage`.
+- Confirms data is stored in temporary files.
 
 ### Step 3: Verify Polling Functionality
 **Action**: Manually trigger the daily polling function.
@@ -163,8 +160,8 @@ The tests for webhooks and polling are executed during the Shopify OAuth callbac
   ```
 
 **Why?**
-- Confirms `poll_shopify_data` (Subchapter 5.2) retrieves data using the UUID.
-- Ensures the daily poll works.
+- Confirms `poll_shopify_data` (Subchapter 5.2) retrieves data using `TokenStorage`.
+- Ensures the daily poll works with temporary file storage.
 
 ### Step 4: Verify Temporary File Storage
 **Action**: Check the temporary file storage for shop data.
@@ -197,7 +194,7 @@ The tests for webhooks and polling are executed during the Shopify OAuth callbac
 ```
 
 **Why?**
-- Confirms data is stored correctly using the UUID-based structure, preparing for cloud storage.
+- Confirms data is stored correctly, preparing for cloud storage in Chapter 6.
 
 ### Step 5: Troubleshoot Issues
 **Action**: Diagnose and fix issues if the JSON response or logs show failures.
@@ -214,7 +211,7 @@ The tests for webhooks and polling are executed during the Shopify OAuth callbac
    - **Cause**: Failed to fetch shop data.
    - **Fix**:
      - Check the `message` (e.g., “User UUID not found”).
-     - Verify `SHOPIFY_ACCESS_TOKEN_<shop_key>` and `USER_UUID_<shop_key>` in the environment.
+     - Verify tokens in `tokens.db` using `sqlite3 /app/data/tokens.db "SELECT key FROM tokens;"`.
      - Check logs for API errors (e.g., HTTP 429).
 3. **Missing `session_id` Cookie**:
    - **Cause**: Shopify OAuth not completed.
@@ -235,8 +232,8 @@ The tests for webhooks and polling are executed during the Shopify OAuth callbac
 - Uses JSON responses and logs to debug webhook, polling, or session issues.
 
 ### Summary: Why This Subchapter Matters
-- **Functionality Verification**: Tests confirm webhook and polling systems work, using the UUID from the session.
-- **Security**: Excludes sensitive tokens and validates sessions.
+- **Functionality Verification**: Tests confirm webhook and polling systems work, using `TokenStorage` and `SessionStorage`.
+- **Security**: Excludes sensitive tokens, validates sessions, and uses encrypted storage.
 - **Comprehensive Data**: Stores non-sensitive shop and product data for the sales bot.
 - **Bot Readiness**: Ensures up-to-date data for customer interactions.
 
