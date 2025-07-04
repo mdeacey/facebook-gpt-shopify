@@ -214,7 +214,7 @@ async def daily_poll():
                 poll_result = await poll_shopify_data(access_token, shop)
                 if poll_result["status"] == "success":
                     shopify_data = await get_shopify_data(access_token, shop)
-                    spaces_key = f"{user_uuid}/shopify/shopify_data.json"
+                    spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
                     session = boto3.session.Session()
                     s3_client = session.client(
                         "s3",

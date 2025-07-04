@@ -89,7 +89,7 @@ async def poll_facebook_data(access_token: str, page_id: str) -> dict:
             aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
             aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
         )
-        spaces_key = f"{user_uuid}/facebook_messenger/{page_id}/page_data.json"
+        spaces_key = f"users/{user_uuid}/facebook_messenger/{page_id}/page_data.json"
         if has_data_changed(page_data, spaces_key, s3_client):
             upload_to_spaces(page_data, spaces_key, s3_client)
             print(f"Polled and uploaded data for page {page_id}: Success")

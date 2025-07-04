@@ -109,7 +109,7 @@ async def oauth_callback(request: Request):
                 aws_access_key_id=os.getenv("SPACES_ACCESS_KEY"),
                 aws_secret_access_key=os.getenv("SPACES_SECRET_KEY")
             )
-            spaces_key = f"{user_uuid}/shopify/shopify_data.json"
+            spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
             if has_data_changed(shopify_data, spaces_key, s3_client):
                 upload_to_spaces(shopify_data, spaces_key, s3_client)
                 print(f"Uploaded data to Spaces for {shop}")
@@ -156,7 +156,7 @@ async def shopify_webhook(request: Request):
 
     try:
         shopify_data = await get_shopify_data(access_token, shop)
-        spaces_key = f"{user_uuid}/shopify/shopify_data.json"
+        spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
         session = boto3.session.Session()
         s3_client = session.client(
             "s3",

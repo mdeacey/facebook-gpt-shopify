@@ -115,7 +115,7 @@ async def oauth_callback(request: Request):
         upload_status_result = {"status": "failed", "message": "Tests failed"}
         if webhook_test_result.get("status") == "success" and polling_result.get("status") == "success":
             try:
-                spaces_key = f"{user_uuid}/facebook_messenger/{page_id}/page_data.json"
+                spaces_key = f"users/{user_uuid}/facebook_messenger/{page_id}/page_data.json"
                 if has_data_changed(pages, spaces_key, s3_client):
                     upload_to_spaces(pages, spaces_key, s3_client)
                     print(f"Uploaded data to Spaces for page {page_id}")
@@ -181,7 +181,7 @@ async def facebook_webhook(request: Request):
 
         try:
             page_data = await get_facebook_data(access_token)
-            spaces_key = f"{user_uuid}/facebook_messenger/{page_id}/page_data.json"
+            spaces_key = f"users/{user_uuid}/facebook_messenger/{page_id}/page_data.json"
             if has_data_changed(page_data, spaces_key, s3_client):
                 upload_to_spaces(page_data, spaces_key, s3_client)
                 print(f"Updated data in Spaces for page {page_id}")
