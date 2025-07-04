@@ -53,7 +53,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import base64
-from typing import Optional
+from typing import Optional, Dict
 from fastapi import HTTPException
 
 def get_fernet_key() -> Fernet:
@@ -120,10 +120,32 @@ class TokenStorage:
                 return None
         except sqlite3.OperationalError as e:
             raise HTTPException(status_code=500, detail=f"Database read failed: {str(e)}")
+
+    def get_all_tokens_by_type(self, type: str) -> Dict[str, str]:
+        try:
+            with sqlite3.connect(self.db_path, timeout=10) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT key, value FROM tokens WHERE type = ?", (type,))
+                results = cursor.fetchall()
+                return {
+                    key: self.fernet.decrypt(value.encode()).decode()
+                    for key, value in results
+                }
+        except sqlite3.OperationalError as e:
+            raise HTTPException(status_code=500, detail=f"Database read failed: {str(e)}")
+
+    def delete_token(self, key: str) -> None:
+        try:
+            with sqlite3.connect(self.db_path, timeout=10) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM tokens WHERE key = ?", (key,))
+                conn.commit()
+        except sqlite3.OperationalError as e:
+            raise HTTPException(status_code=500, detail=f"Database delete failed: {str(e)}")
 ```
 
 **Why?**
-- **SQLite Storage**: Stores tokens in a configurable path (`TOKEN_DB_PATH` or `./data/tokens.db`), persisting across restarts and avoiding permission issues in restricted environments.
+- **SQLite Storage**: Stores tokens in a configurable path (`TOKEN_DB_PATH` or `./data/tokens.db`), persisting across restarts and avoiding permission issues in restricted environments (e.g., GitHub Codespaces).
 - **Encryption**: Uses `cryptography` with `STATE_TOKEN_SECRET` to secure tokens and UUIDs.
 - **WAL**: Enables concurrent access for production.
 - **Retry Logic**: Handles database locking with retries.
@@ -561,13 +583,15 @@ SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
 # SHOPIFY_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/shopify/callback
 # Shared secret for state token CSRF protection
 STATE_TOKEN_SECRET=replace_with_secure_token
-# Database path for token storage
+# Database paths for SQLite storage
 TOKEN_DB_PATH=./data/tokens.db
+SESSION_DB_PATH=./data/sessions.db
 ```
 
 **Why?**
-- Adds `TOKEN_DB_PATH` for flexible database path configuration.
+- Adds `TOKEN_DB_PATH` for flexible database path configuration, defaulting to `./data/tokens.db` for development.
 - Matches `SESSION_DB_PATH` from Subchapter 3.1 for consistency.
+- **Production Note**: Set `TOKEN_DB_PATH` to a secure, writable directory (e.g., `/var/app/data/tokens.db`) and ensure secure permissions (`chmod 600`, `chown app_user:app_user`).
 
 ### Step 12: Testing Preparation
 To verify token management:

@@ -71,7 +71,7 @@ fi
 
 # Set variables
 DATE=$(date +%Y-%m-%d)
-DB_PATH="${TOKEN_DB_PATH:-/app/data/tokens.db}"
+DB_PATH="${TOKEN_DB_PATH:-./data/tokens.db}"
 BACKUP_DIR="/app/backups"
 BACKUP_FILE="$BACKUP_DIR/tokens_$DATE.db"
 
@@ -104,7 +104,7 @@ fi
 - **Date-Stamped Backup**: Copies `tokens.db` to `/app/backups/tokens_YYYY-MM-DD.db`.
 - **Spaces Upload**: Uses `aws` CLI to upload to `backups/tokens_YYYY-MM-DD.db`.
 - **Error Handling**: Exits on failure for debugging.
-- **Configurable Path**: Uses `TOKEN_DB_PATH` with a fallback to `/app/data/tokens.db` for compatibility with `TokenStorage` (Chapter 3).
+- **Configurable Path**: Uses `TOKEN_DB_PATH` with a fallback to `./data/tokens.db` for compatibility with `TokenStorage` (Chapter 3).
 - **Production Note**: Ensure `TOKEN_DB_PATH` matches `TokenStorage` configuration, and set secure permissions (`chmod 600`, `chown app_user:app_user`) for `/app/.env` and `DB_PATH`.
 
 ### Step 4: Create Backup Script for `sessions.db`
@@ -124,7 +124,7 @@ fi
 
 # Set variables
 DATE=$(date +%Y-%m-%d)
-DB_PATH="${SESSION_DB_PATH:-/app/data/sessions.db}"
+DB_PATH="${SESSION_DB_PATH:-./data/sessions.db}"
 BACKUP_DIR="/app/backups"
 BACKUP_FILE="$BACKUP_DIR/sessions_$DATE.db"
 
@@ -156,7 +156,7 @@ fi
 - **Similar Structure**: Mirrors `backup_tokens_db.sh` for consistency.
 - **Date-Stamped Backup**: Copies `sessions.db` to `/app/backups/sessions_YYYY-MM-DD.db`.
 - **Spaces Upload**: Uploads to `backups/sessions_YYYY-MM-DD.db`.
-- **Configurable Path**: Uses `SESSION_DB_PATH` with a fallback to `/app/data/sessions.db` for compatibility with `SessionStorage` (Chapter 3).
+- **Configurable Path**: Uses `SESSION_DB_PATH` with a fallback to `./data/sessions.db` for compatibility with `SessionStorage` (Chapter 3).
 - **Error Handling**: Ensures reliable backup execution.
 
 ### Step 5: Make Scripts Executable

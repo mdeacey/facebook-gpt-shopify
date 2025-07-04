@@ -49,7 +49,7 @@ Testing ensures:
    ```
 4. Verify `tokens.db` contains the token and UUID:
    ```bash
-   sqlite3 "${TOKEN_DB_PATH:-/app/data/tokens.db}" "SELECT key FROM tokens;"
+   sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"
    ```
    **Expected Output**:
    ```
@@ -58,7 +58,7 @@ Testing ensures:
    ```
 5. Verify `sessions.db` contains the session:
    ```bash
-   sqlite3 "${SESSION_DB_PATH:-/app/data/sessions.db}" "SELECT session_id, created_at FROM sessions;"
+   sqlite3 "${SESSION_DB_PATH:-./data/sessions.db}" "SELECT session_id, created_at FROM sessions;"
    ```
    **Expected Output**:
    ```
@@ -79,7 +79,7 @@ Testing ensures:
    ```
 8. Verify `tokens.db` contains additional tokens and UUIDs:
    ```bash
-   sqlite3 "${TOKEN_DB_PATH:-/app/data/tokens.db}" "SELECT key FROM tokens;"
+   sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"
    ```
    **Expected Output**:
    ```
@@ -94,7 +94,7 @@ Testing ensures:
 - Confirms `TokenStorage` and `SessionStorage` (Chapter 3) store encrypted data.
 - Ensures OAuth flows (Chapters 1–2) save tokens/UUIDs and sessions correctly.
 - Verifies multi-platform UUID linking.
-- **Note**: The database paths are configurable via `TOKEN_DB_PATH` and `SESSION_DB_PATH` environment variables, with fallbacks to `/app/data/tokens.db` and `/app/data/sessions.db`. Set these in `.env` for custom paths (e.g., `/var/app/data/` in production).
+- **Note**: The database paths are configurable via `TOKEN_DB_PATH` and `SESSION_DB_PATH` environment variables, with fallbacks to `./data/tokens.db` and `./data/sessions.db`. Set these in `.env` for custom paths (e.g., `/var/app/data/` in production).
 
 ### Step 3: Test Backup Scripts
 **Action**: Manually run backup scripts to verify database copying and Spaces uploads.
@@ -126,7 +126,7 @@ Testing ensures:
 **Why?**
 - Confirms scripts copy databases and upload to Spaces.
 - Ensures date-stamped versioning (`YYYY-MM-DD`).
-- **Note**: Ensure the backup scripts reference the correct database paths (`$TOKEN_DB_PATH` or `/app/data/tokens.db`, `$SESSION_DB_PATH` or `/app/data/sessions.db`).
+- **Note**: Ensure the backup scripts reference the correct database paths (`$TOKEN_DB_PATH` or `./data/tokens.db`, `$SESSION_DB_PATH` or `./data/sessions.db`).
 
 ### Step 4: Test Restore Process
 **Action**: Simulate database loss and restore from Spaces.
@@ -135,18 +135,18 @@ Testing ensures:
 1. Stop the FastAPI app (`Ctrl+C`).
 2. Simulate loss by moving databases:
    ```bash
-   mv "${TOKEN_DB_PATH:-/app/data/tokens.db}" "${TOKEN_DB_PATH:-/app/data/tokens.db}.bak"
-   mv "${SESSION_DB_PATH:-/app/data/sessions.db}" "${SESSION_DB_PATH:-/app/data/sessions.db}.bak"
+   mv "${TOKEN_DB_PATH:-./data/tokens.db}" "${TOKEN_DB_PATH:-./data/tokens.db}.bak"
+   mv "${SESSION_DB_PATH:-./data/sessions.db}" "${SESSION_DB_PATH:-./data/sessions.db}.bak"
    ```
 3. Download backups from Spaces:
    ```bash
-   aws --endpoint-url https://nyc3.digitaloceanspaces.com s3 cp s3://gpt-messenger-data/backups/tokens_2025-07-04.db "${TOKEN_DB_PATH:-/app/data/tokens.db}"
-   aws --endpoint-url https://nyc3.digitaloceanspaces.com s3 cp s3://gpt-messenger-data/backups/sessions_2025-07-04.db "${SESSION_DB_PATH:-/app/data/sessions.db}"
+   aws --endpoint-url https://nyc3.digitaloceanspaces.com s3 cp s3://gpt-messenger-data/backups/tokens_2025-07-04.db "${TOKEN_DB_PATH:-./data/tokens.db}"
+   aws --endpoint-url https://nyc3.digitaloceanspaces.com s3 cp s3://gpt-messenger-data/backups/sessions_2025-07-04.db "${SESSION_DB_PATH:-./data/sessions.db}"
    ```
 4. Set permissions:
    ```bash
-   chmod 600 "${TOKEN_DB_PATH:-/app/data/tokens.db}" "${SESSION_DB_PATH:-/app/data/sessions.db}"
-   chown app_user:app_user "${TOKEN_DB_PATH:-/app/data/tokens.db}" "${SESSION_DB_PATH:-/app/data/sessions.db}"
+   chmod 600 "${TOKEN_DB_PATH:-./data/tokens.db}" "${SESSION_DB_PATH:-./data/sessions.db}"
+   chown app_user:app_user "${TOKEN_DB_PATH:-./data/tokens.db}" "${SESSION_DB_PATH:-./data/sessions.db}"
    ```
 5. Restart the app: `python app.py`.
 6. Re-run Shopify and Facebook OAuth flows (Steps 2–3 in Step 2).
@@ -155,7 +155,7 @@ Testing ensures:
 **Why?**
 - Ensures backups are recoverable and functional.
 - Confirms data integrity after restoration.
-- **Note**: Use `TOKEN_DB_PATH` and `SESSION_DB_PATH` environment variables to specify database paths, with fallbacks to `/app/data/tokens.db` and `/app/data/sessions.db`. Adjust paths in backup scripts if customized.
+- **Note**: Use `TOKEN_DB_PATH` and `SESSION_DB_PATH` environment variables to specify database paths, with fallbacks to `./data/tokens.db` and `./data/sessions.db`. Adjust paths in backup scripts if customized.
 
 ### Step 5: Verify Cron Scheduling
 **Action**: Check that cron jobs execute backups daily.
@@ -186,10 +186,10 @@ Testing ensures:
 **Common Issues and Fixes**:
 1. **Storage Failure**:
    - **Cause**: Tokens or sessions not saved.
-   - **Fix**: Verify `tokens.db` and `sessions.db` with `sqlite3 "${TOKEN_DB_PATH:-/app/data/tokens.db}" "SELECT key FROM tokens;"` and `sqlite3 "${SESSION_DB_PATH:-/app/data/sessions.db}" "SELECT session_id, created_at FROM sessions;"`, check OAuth logs for errors (Chapters 1–2).
+   - **Fix**: Verify `tokens.db` and `sessions.db` with `sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"` and `sqlite3 "${SESSION_DB_PATH:-./data/sessions.db}" "SELECT session_id, created_at FROM sessions;"`, check OAuth logs for errors (Chapters 1–2).
 2. **Backup Script Failure**:
    - **Cause**: Missing environment variables or permissions.
-   - **Fix**: Ensure `/app/.env` includes Spaces credentials and `TOKEN_DB_PATH`, `SESSION_DB_PATH`, check permissions (`ls -l "${TOKEN_DB_PATH:-/app/data/tokens.db}" "${SESSION_DB_PATH:-/app/data/sessions.db}"`), and review logs in `/app/backups/`.
+   - **Fix**: Ensure `/app/.env` includes `SPACES_API_KEY`, `SPACES_API_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT`, `TOKEN_DB_PATH`, `SESSION_DB_PATH`; check permissions (`ls -l "${TOKEN_DB_PATH:-./data/tokens.db}" "${SESSION_DB_PATH:-./data/sessions.db}"`); review logs in `/app/backups/`.
 3. **Spaces Upload Failure**:
    - **Cause**: Invalid credentials or bucket settings.
    - **Fix**: Verify `SPACES_API_KEY`, `SPACES_API_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT` in `.env`.

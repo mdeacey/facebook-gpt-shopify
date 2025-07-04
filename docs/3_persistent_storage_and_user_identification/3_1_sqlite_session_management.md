@@ -139,11 +139,11 @@ class SessionStorage:
 ```
 
 **Why?**
-- **SQLite Storage**: Stores sessions in a configurable path (`SESSION_DB_PATH` or `./data/sessions.db`), persisting across restarts and avoiding permission issues in restricted environments.
+- **SQLite Storage**: Stores sessions in a configurable path (`SESSION_DB_PATH` or `./data/sessions.db`), persisting across restarts and using a writable directory for development environments (e.g., GitHub Codespaces).
 - **Encryption**: Uses `cryptography` with `STATE_TOKEN_SECRET` to encrypt UUIDs.
 - **WAL**: Enables concurrent access for multiple `gunicorn` workers in production.
 - **Retry Logic**: Handles database locking with retries.
-- **Production Note**: Set `SESSION_DB_PATH` to a writable directory in production (e.g., `/var/app/data/sessions.db` or a mounted volume). Ensure file permissions (`chmod 600`) and ownership (`chown app_user:app_user`) for security.
+- **Production Note**: Set `SESSION_DB_PATH` to a secure, writable directory in production (e.g., `/var/app/data/sessions.db` or a mounted volume). Ensure file permissions (`chmod 600`) and ownership (`chown app_user:app_user`) for security.
 
 ### Step 4: Update `shopify_integration/routes.py`
 Modify `/callback` to set a `session_id` cookie using `SessionStorage`.
@@ -401,7 +401,7 @@ SESSION_DB_PATH=./data/sessions.db
 
 **Why?**
 - Supports both OAuth flows and session encryption.
-- `SESSION_DB_PATH` allows custom database paths, with a fallback to `./data/sessions.db` for development.
+- `SESSION_DB_PATH` defaults to `./data/sessions.db` for development, avoiding permission issues in restricted environments (e.g., GitHub Codespaces).
 - Excludes future variables (e.g., webhook or Spaces settings, introduced in Chapters 4–6).
 - **Production Note**: Set `SESSION_DB_PATH` to a secure, writable directory (e.g., `/var/app/data/sessions.db`) and ensure secure permissions (`chmod 600`, `chown app_user:app_user`).
 
