@@ -59,13 +59,13 @@ Update `.env.example` to include Spaces credentials.
 FACEBOOK_APP_ID=your_facebook_app_id
 FACEBOOK_APP_SECRET=your_facebook_app_secret
 FACEBOOK_REDIRECT_URI=http://localhost:5000/facebook/callback
-FACEBOOK_WEBHOOK_ADDRESS=https://your-app.com/facebook/webhook
+http://localhost:5000/facebook/webhook
 FACEBOOK_VERIFY_TOKEN=your_verify_token
 # Shopify OAuth credentials
 SHOPIFY_API_KEY=your_shopify_api_key
 SHOPIFY_API_SECRET=your_shopify_api_secret
 SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
-SHOPIFY_WEBHOOK_ADDRESS=https://your-app.com/shopify/webhook
+http://localhost:5000/shopify/webhook
 # DigitalOcean Spaces credentials
 SPACES_KEY=your_spaces_key
 SPACES_SECRET=your_spaces_secret

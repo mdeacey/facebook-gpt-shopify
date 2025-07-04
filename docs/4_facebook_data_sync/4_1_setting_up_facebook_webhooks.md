@@ -26,7 +26,7 @@ FACEBOOK_REDIRECT_URI=http://localhost:5000/facebook/callback
 # For GitHub Codespaces
 # FACEBOOK_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/facebook/callback
 # Webhook configuration
-FACEBOOK_WEBHOOK_ADDRESS=https://your-app.com/facebook/webhook
+http://localhost:5000/facebook/webhook
 FACEBOOK_VERIFY_TOKEN=your_verify_token
 # Shopify OAuth credentials
 SHOPIFY_API_KEY=your_shopify_api_key
