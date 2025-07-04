@@ -5,7 +5,7 @@ This subchapter introduces SQLite-based token management to store access tokens 
 
 ### Step 1: Why SQLite-Based Token Management?
 Tokens and UUIDs (e.g., `FACEBOOK_ACCESS_TOKEN_{page_id}`, `SHOPIFY_ACCESS_TOKEN_{shop_key}`, `PAGE_UUID_{page_id}`, `USER_UUID_{shop_key}`) are critical for accessing platform APIs and linking user data. Using `os.environ` is not persistent and unsuitable for production. The SQLite-based approach:
-- Stores tokens and UUIDs in `/app/data/tokens.db`, persisting across restarts.
+- Stores tokens and UUIDs in a configurable path (`TOKEN_DB_PATH` or `./data/tokens.db`), persisting across restarts.
 - Encrypts sensitive data using `cryptography` with `STATE_TOKEN_SECRET`.
 - Uses WAL for concurrent access, supporting multiple `gunicorn` workers.
 - Simplifies token retrieval for future data synchronization (Chapters 4–5).
@@ -68,7 +68,7 @@ def get_fernet_key() -> Fernet:
     return Fernet(key)
 
 class TokenStorage:
-    def __init__(self, db_path: str = "/app/data/tokens.db"):
+    def __init__(self, db_path: str = os.getenv("TOKEN_DB_PATH", "./data/tokens.db")):
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.fernet = get_fernet_key()
@@ -123,12 +123,12 @@ class TokenStorage:
 ```
 
 **Why?**
-- **SQLite Storage**: Stores tokens in `/app/data/tokens.db`, persisting across restarts.
+- **SQLite Storage**: Stores tokens in a configurable path (`TOKEN_DB_PATH` or `./data/tokens.db`), persisting across restarts and avoiding permission issues in restricted environments.
 - **Encryption**: Uses `cryptography` with `STATE_TOKEN_SECRET` to secure tokens and UUIDs.
 - **WAL**: Enables concurrent access for production.
 - **Retry Logic**: Handles database locking with retries.
 - **Type Field**: Distinguishes tokens (`token`) from UUIDs (`uuid`) for future use (e.g., Chapter 4).
-- **Production Note**: Secure file permissions for `tokens.db` (e.g., `chmod 600`).
+- **Production Note**: Set `TOKEN_DB_PATH` to a writable directory in production (e.g., `/var/app/data/tokens.db` or a mounted volume). Secure file permissions (`chmod 600`) and ownership (`chown app_user:app_user`).
 
 ### Step 4: Update `facebook_integration/routes.py`
 Replace `os.environ` with `TokenStorage` for token and UUID storage.
@@ -543,12 +543,38 @@ cryptography
 - `cryptography` supports encryption for both sessions and tokens.
 - Excludes `apscheduler` and `boto3` (introduced in Chapters 4–6).
 
-### Step 11: Testing Preparation
+### Step 11: Update `.env.example`
+Add the token database path to `.env.example`.
+
+```plaintext
+# Facebook OAuth credentials
+FACEBOOK_APP_ID=your_app_id
+FACEBOOK_APP_SECRET=your_app_secret
+FACEBOOK_REDIRECT_URI=http://localhost:5000/facebook/callback
+# For GitHub Codespaces
+# FACEBOOK_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/facebook/callback
+# Shopify OAuth credentials
+SHOPIFY_API_KEY=your_shopify_api_key
+SHOPIFY_API_SECRET=your_shopify_api_secret
+SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
+# For GitHub Codespaces
+# SHOPIFY_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/shopify/callback
+# Shared secret for state token CSRF protection
+STATE_TOKEN_SECRET=replace_with_secure_token
+# Database path for token storage
+TOKEN_DB_PATH=./data/tokens.db
+```
+
+**Why?**
+- Adds `TOKEN_DB_PATH` for flexible database path configuration.
+- Matches `SESSION_DB_PATH` from Subchapter 3.1 for consistency.
+
+### Step 12: Testing Preparation
 To verify token management:
 - Run: `python app.py`.
 - Complete Shopify OAuth (`/shopify/acme-7cu19ngr/login`) to store tokens and UUIDs in `tokens.db` and set the `session_id` cookie.
 - Complete Facebook OAuth (`/facebook/login`) to store tokens and UUIDs in `tokens.db` and retrieve the UUID from `sessions.db`.
-- Check `/app/data/tokens.db` exists and contains encrypted tokens/UUIDs.
+- Check the token database (defined by `TOKEN_DB_PATH` or `./data/tokens.db`) exists and contains encrypted tokens/UUIDs. Use `sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"`.
 
 **Why?**
 - Ensures token storage is functional before proceeding to data synchronization.

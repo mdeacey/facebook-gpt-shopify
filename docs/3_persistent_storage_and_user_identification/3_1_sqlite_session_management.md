@@ -67,7 +67,7 @@ def get_fernet_key() -> Fernet:
     return Fernet(key)
 
 class SessionStorage:
-    def __init__(self, db_path: str = "/app/data/sessions.db"):
+    def __init__(self, db_path: str = os.getenv("SESSION_DB_PATH", "./data/sessions.db")):
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.fernet = get_fernet_key()
@@ -139,11 +139,11 @@ class SessionStorage:
 ```
 
 **Why?**
-- **SQLite Storage**: Stores sessions in `/app/data/sessions.db`, persisting across restarts.
+- **SQLite Storage**: Stores sessions in a configurable path (`SESSION_DB_PATH` or `./data/sessions.db`), persisting across restarts and avoiding permission issues in restricted environments.
 - **Encryption**: Uses `cryptography` with `STATE_TOKEN_SECRET` to encrypt UUIDs.
 - **WAL**: Enables concurrent access for multiple `gunicorn` workers in production.
 - **Retry Logic**: Handles database locking with retries.
-- **Production Note**: Secure file permissions for `sessions.db` (e.g., `chmod 600`) and ensure `STATE_TOKEN_SECRET` is unique.
+- **Production Note**: Set `SESSION_DB_PATH` to a writable directory in production (e.g., `/var/app/data/sessions.db` or a mounted volume). Ensure file permissions (`chmod 600`) and ownership (`chown app_user:app_user`) for security.
 
 ### Step 4: Update `shopify_integration/routes.py`
 Modify `/callback` to set a `session_id` cookie using `SessionStorage`.
@@ -378,7 +378,7 @@ def validate_state_token(state_token: str, max_age: int = 300):
 - Excludes future features (e.g., webhooks, polling).
 
 ### Step 7: Configure Environment Variables
-Use the `.env.example` from Chapter 2, as no new variables are needed.
+Update `.env.example` to include the session database path.
 
 ```plaintext
 # Facebook OAuth credentials
@@ -395,12 +395,15 @@ SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
 # SHOPIFY_REDIRECT_URI=https://your-codespace-id-5000.app.github.dev/shopify/callback
 # Shared secret for state token CSRF protection
 STATE_TOKEN_SECRET=replace_with_secure_token
+# Database path for session storage
+SESSION_DB_PATH=./data/sessions.db
 ```
 
 **Why?**
 - Supports both OAuth flows and session encryption.
+- `SESSION_DB_PATH` allows custom database paths, with a fallback to `./data/sessions.db` for development.
 - Excludes future variables (e.g., webhook or Spaces settings, introduced in Chapters 4–6).
-- **Production Note**: Ensure `STATE_TOKEN_SECRET` is a secure, unique value.
+- **Production Note**: Set `SESSION_DB_PATH` to a secure, writable directory (e.g., `/var/app/data/sessions.db`) and ensure secure permissions (`chmod 600`, `chown app_user:app_user`).
 
 ### Step 8: Update `requirements.txt`
 Add `cryptography` for session encryption.
@@ -490,7 +493,7 @@ Testing is covered in Chapters 1–2, but you can verify session management:
 - Run: `python app.py`.
 - Complete Shopify OAuth (`/shopify/acme-7cu19ngr/login`) to set the `session_id` cookie.
 - Navigate to `/facebook/login` to verify the UUID is retrieved from `sessions.db`.
-- Check `/app/data/sessions.db` exists and contains encrypted UUIDs.
+- Check the session database (defined by `SESSION_DB_PATH` or `./data/sessions.db`) exists and contains encrypted UUIDs. Use `sqlite3 "${SESSION_DB_PATH:-./data/sessions.db}" "SELECT session_id, created_at FROM sessions;"`.
 
 **Why?**
 - Ensures session storage is functional before proceeding to token management.

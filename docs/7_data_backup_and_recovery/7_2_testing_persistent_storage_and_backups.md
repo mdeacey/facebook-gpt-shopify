@@ -7,7 +7,7 @@ This subchapter verifies the SQLite-based persistent storage (`tokens.db`, `sess
 ### Prerequisites
 - Completed Chapters 1–6 and Subchapter 7.1.
 - FastAPI application running on a DigitalOcean Droplet or locally.
-- SQLite databases (`tokens.db`, `sessions.db`) in `/app/data/` (Chapter 3).
+- SQLite databases (`tokens.db`, `sessions.db`) in a configurable path (`TOKEN_DB_PATH`, `SESSION_DB_PATH`, or `./data/`) (Chapter 3).
 - Backup scripts (`backup_tokens_db.sh`, `backup_sessions_db.sh`) set up in `/app/scripts/` (Subchapter 7.1).
 - DigitalOcean Spaces bucket and credentials configured (Subchapter 6.3).
 - `aws` CLI installed on the Droplet (`sudo apt-get install awscli`).
@@ -49,7 +49,7 @@ Testing ensures:
    ```
 4. Verify `tokens.db` contains the token and UUID:
    ```bash
-   sqlite3 /app/data/tokens.db "SELECT key FROM tokens;"
+   sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"
    ```
    **Expected Output**:
    ```
@@ -58,7 +58,7 @@ Testing ensures:
    ```
 5. Verify `sessions.db` contains the session:
    ```bash
-   sqlite3 /app/data/sessions.db "SELECT session_id, created_at FROM sessions;"
+   sqlite3 "${SESSION_DB_PATH:-./data/sessions.db}" "SELECT session_id, created_at FROM sessions;"
    ```
    **Expected Output**:
    ```
@@ -79,7 +79,7 @@ Testing ensures:
    ```
 8. Verify `tokens.db` contains additional tokens and UUIDs:
    ```bash
-   sqlite3 /app/data/tokens.db "SELECT key FROM tokens;"
+   sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"
    ```
    **Expected Output**:
    ```
@@ -94,6 +94,7 @@ Testing ensures:
 - Confirms `TokenStorage` and `SessionStorage` (Chapter 3) store encrypted data.
 - Ensures OAuth flows (Chapters 1–2) save tokens/UUIDs and sessions correctly.
 - Verifies multi-platform UUID linking.
+- **Note**: The database paths are configurable via `TOKEN_DB_PATH` and `SESSION_DB_PATH` environment variables, with fallbacks to `./data/tokens.db` and `./data/sessions.db`. Set these in `.env` for custom paths (e.g., `/var/app/data/` in production).
 
 ### Step 3: Test Backup Scripts
 **Action**: Manually run backup scripts to verify database copying and Spaces uploads.
@@ -125,6 +126,7 @@ Testing ensures:
 **Why?**
 - Confirms scripts copy databases and upload to Spaces.
 - Ensures date-stamped versioning (`YYYY-MM-DD`).
+- **Note**: Ensure the backup scripts reference the correct database paths (`$TOKEN_DB_PATH` or `./data/tokens.db`, `$SESSION_DB_PATH` or `./data/sessions.db`).
 
 ### Step 4: Test Restore Process
 **Action**: Simulate database loss and restore from Spaces.
@@ -133,18 +135,18 @@ Testing ensures:
 1. Stop the FastAPI app (`Ctrl+C`).
 2. Simulate loss by moving databases:
    ```bash
-   mv /app/data/tokens.db /app/data/tokens.db.bak
-   mv /app/data/sessions.db /app/data/sessions.db.bak
+   mv "${TOKEN_DB_PATH:-./data/tokens.db}" "${TOKEN_DB_PATH:-./data/tokens.db}.bak"
+   mv "${SESSION_DB_PATH:-./data/sessions.db}" "${SESSION_DB_PATH:-./data/sessions.db}.bak"
    ```
 3. Download backups from Spaces:
    ```bash
-   aws --endpoint-url https://nyc3.digitaloceanspaces.com s3 cp s3://gpt-messenger-data/backups/tokens_2025-07-04.db /app/data/tokens.db
-   aws --endpoint-url https://nyc3.digitaloceanspaces.com s3 cp s3://gpt-messenger-data/backups/sessions_2025-07-04.db /app/data/sessions.db
+   aws --endpoint-url https://nyc3.digitaloceanspaces.com s3 cp s3://gpt-messenger-data/backups/tokens_2025-07-04.db "${TOKEN_DB_PATH:-./data/tokens.db}"
+   aws --endpoint-url https://nyc3.digitaloceanspaces.com s3 cp s3://gpt-messenger-data/backups/sessions_2025-07-04.db "${SESSION_DB_PATH:-./data/sessions.db}"
    ```
 4. Set permissions:
    ```bash
-   chmod 600 /app/data/tokens.db /app/data/sessions.db
-   chown app_user:app_user /app/data/tokens.db /app/data/sessions.db
+   chmod 600 "${TOKEN_DB_PATH:-./data/tokens.db}" "${SESSION_DB_PATH:-./data/sessions.db}"
+   chown app_user:app_user "${TOKEN_DB_PATH:-./data/tokens.db}" "${SESSION_DB_PATH:-./data/sessions.db}"
    ```
 5. Restart the app: `python app.py`.
 6. Re-run Shopify and Facebook OAuth flows (Steps 2–3 in Step 2).
@@ -153,6 +155,7 @@ Testing ensures:
 **Why?**
 - Ensures backups are recoverable and functional.
 - Confirms data integrity after restoration.
+- **Note**: Use `TOKEN_DB_PATH` and `SESSION_DB_PATH` environment variables to specify database paths, with fallbacks to `./data/tokens.db` and `./data/sessions.db`. Adjust paths in backup scripts if customized.
 
 ### Step 5: Verify Cron Scheduling
 **Action**: Check that cron jobs execute backups daily.
@@ -183,16 +186,16 @@ Testing ensures:
 **Common Issues and Fixes**:
 1. **Storage Failure**:
    - **Cause**: Tokens or sessions not saved.
-   - **Fix**: Verify `tokens.db` and `sessions.db` with `sqlite3`, check OAuth logs for errors (Chapters 1–2).
+   - **Fix**: Verify `tokens.db` and `sessions.db` with `sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"` and `sqlite3 "${SESSION_DB_PATH:-./data/sessions.db}" "SELECT session_id, created_at FROM sessions;"`, check OAuth logs for errors (Chapters 1–2).
 2. **Backup Script Failure**:
    - **Cause**: Missing environment variables or permissions.
-   - **Fix**: Ensure `/app/.env` includes Spaces credentials, check permissions (`ls -l /app/data/`), and review logs in `/app/backups/`.
+   - **Fix**: Ensure `/app/.env` includes Spaces credentials and `TOKEN_DB_PATH`, `SESSION_DB_PATH`, check permissions (`ls -l "${TOKEN_DB_PATH:-./data/tokens.db}" "${SESSION_DB_PATH:-./data/sessions.db}"`), and review logs in `/app/backups/`.
 3. **Spaces Upload Failure**:
    - **Cause**: Invalid credentials or bucket settings.
    - **Fix**: Verify `SPACES_KEY`, `SPACES_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT` in `.env`.
 4. **Restore Failure**:
    - **Cause**: Corrupted backup or incorrect permissions.
-   - **Fix**: Download and inspect backups, ensure `chmod 600` and `chown app_user:app_user`.
+   - **Fix**: Download and inspect backups, ensure `chmod 600` and `chown app_user:app_user` for restored files.
 5. **Cron Failure**:
    - **Cause**: Cron not running or script errors.
    - **Fix**: Check `crontab -l`, verify script permissions (`chmod +x`), and review cron logs (`/var/log/syslog`).

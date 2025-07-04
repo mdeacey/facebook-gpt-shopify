@@ -7,7 +7,7 @@ To ensure data reliability for the GPT Messenger sales bot, this subchapter impl
 ### Prerequisites
 - Completed Chapters 1–6 (OAuth, Persistent Storage, Data Sync, Spaces Integration).
 - FastAPI application running on a DigitalOcean Droplet.
-- SQLite databases (`tokens.db`, `sessions.db`) set up in `/app/data/` (Chapter 3).
+- SQLite databases (`tokens.db`, `sessions.db`) set up in a configurable path (`TOKEN_DB_PATH`, `SESSION_DB_PATH`, or `./data/`) (Chapter 3).
 - DigitalOcean Spaces bucket and credentials configured (`SPACES_KEY`, `SPACES_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT`) from Subchapter 6.3.
 - `aws` CLI installed on the Droplet (`sudo apt-get install awscli`).
 
@@ -71,7 +71,7 @@ fi
 
 # Set variables
 DATE=$(date +%Y-%m-%d)
-DB_PATH="/app/data/tokens.db"
+DB_PATH="${TOKEN_DB_PATH:-/app/data/tokens.db}"
 BACKUP_DIR="/app/backups"
 BACKUP_FILE="$BACKUP_DIR/tokens_$DATE.db"
 
@@ -100,11 +100,12 @@ fi
 ```
 
 **Why?**
-- **Environment Variables**: Sources `.env` for Spaces credentials.
+- **Environment Variables**: Sources `.env` for Spaces credentials and `TOKEN_DB_PATH`.
 - **Date-Stamped Backup**: Copies `tokens.db` to `/app/backups/tokens_YYYY-MM-DD.db`.
 - **Spaces Upload**: Uses `aws` CLI to upload to `backups/tokens_YYYY-MM-DD.db`.
 - **Error Handling**: Exits on failure for debugging.
-- **Production Note**: Ensure `/app/.env` and `/app/data/tokens.db` have secure permissions (`chmod 600`, `chown app_user:app_user`).
+- **Configurable Path**: Uses `TOKEN_DB_PATH` with a fallback to `/app/data/tokens.db` for compatibility with `TokenStorage` (Chapter 3).
+- **Production Note**: Ensure `TOKEN_DB_PATH` matches `TokenStorage` configuration, and set secure permissions (`chmod 600`, `chown app_user:app_user`) for `/app/.env` and `DB_PATH`.
 
 ### Step 4: Create Backup Script for `sessions.db`
 Create `scripts/backup_sessions_db.sh` to copy and upload `sessions.db`.
@@ -123,7 +124,7 @@ fi
 
 # Set variables
 DATE=$(date +%Y-%m-%d)
-DB_PATH="/app/data/sessions.db"
+DB_PATH="${SESSION_DB_PATH:-/app/data/sessions.db}"
 BACKUP_DIR="/app/backups"
 BACKUP_FILE="$BACKUP_DIR/sessions_$DATE.db"
 
@@ -155,6 +156,7 @@ fi
 - **Similar Structure**: Mirrors `backup_tokens_db.sh` for consistency.
 - **Date-Stamped Backup**: Copies `sessions.db` to `/app/backups/sessions_YYYY-MM-DD.db`.
 - **Spaces Upload**: Uploads to `backups/sessions_YYYY-MM-DD.db`.
+- **Configurable Path**: Uses `SESSION_DB_PATH` with a fallback to `/app/data/sessions.db` for compatibility with `SessionStorage` (Chapter 3).
 - **Error Handling**: Ensures reliable backup execution.
 
 ### Step 5: Make Scripts Executable
@@ -167,7 +169,7 @@ chmod +x /app/scripts/backup_sessions_db.sh
 
 **Why?**
 - Ensures scripts can be run by cron.
-- **Production Note**: Run as a non-root user (e.g., `app_user`) with access to `/app/.env` and `/app/data/`.
+- **Production Note**: Run as a non-root user (e.g., `app_user`) with access to `/app/.env` and `DB_PATH`.
 
 ### Step 6: Schedule Backups with Cron
 **Action**: Schedule daily backups at 1 AM UTC.
@@ -185,7 +187,7 @@ Add to crontab:
 **Why?**
 - Runs backups daily at 1 AM UTC, logging output for debugging.
 - Separates logs (`backup_tokens.log`, `backup_sessions.log`) for monitoring.
-- **Production Note**: Ensure cron runs as `app_user` with access to `/app/.env`.
+- **Production Note**: Ensure cron runs as `app_user` with access to `/app/.env` and `DB_PATH`.
 
 ### Step 7: Update `.gitignore`
 Add backup directory and scripts to prevent committing sensitive data.
@@ -206,7 +208,7 @@ __pycache__/
 - Builds on Chapters 3–6 `.gitignore`.
 
 ### Step 8: Update Environment Variables
-Use the `.env.example` from Chapter 6, as no new variables are needed.
+Update `.env.example` to include database paths.
 
 ```plaintext
 # Facebook OAuth credentials
@@ -228,11 +230,14 @@ SPACES_BUCKET=gpt-messenger-data
 SPACES_ENDPOINT=https://nyc3.digitaloceanspaces.com
 # Shared secret for state token CSRF protection
 STATE_TOKEN_SECRET=replace_with_secure_token
+# Database paths for SQLite storage
+TOKEN_DB_PATH=./data/tokens.db
+SESSION_DB_PATH=./data/sessions.db
 ```
 
 **Why?**
-- Provides Spaces credentials for backup scripts.
-- Reuses variables from Chapters 1–6.
+- Provides Spaces credentials and database paths for backup scripts.
+- Matches `TokenStorage` and `SessionStorage` configurations (Chapter 3).
 
 ### Step 9: Install AWS CLI on the Droplet
 **Action**: Install the `aws` CLI for Spaces uploads.
@@ -255,7 +260,7 @@ Enter:
 
 ### Step 10: Testing Preparation
 To verify backup setup:
-1. Ensure `/app/.env` includes Spaces credentials.
+1. Ensure `/app/.env` includes Spaces credentials and `TOKEN_DB_PATH`, `SESSION_DB_PATH`.
 2. Run scripts manually:
    ```bash
    /app/scripts/backup_tokens_db.sh
@@ -270,6 +275,7 @@ To verify backup setup:
 - **Scalability**: Uses Spaces for offsite storage.
 - **Automation**: Cron jobs streamline backup processes.
 - **Security**: Leverages encrypted databases and secure credentials.
+- **Configurability**: Uses `TOKEN_DB_PATH` and `SESSION_DB_PATH` for flexible database paths.
 
 ### Next Steps:
 - Test persistent storage and backups (Subchapter 7.2).
