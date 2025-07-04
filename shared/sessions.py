@@ -20,7 +20,7 @@ def get_fernet_key() -> Fernet:
     return Fernet(key)
 
 class SessionStorage:
-    def __init__(self, db_path: str = "/app/data/sessions.db"):
+    def __init__(self, db_path: str = os.getenv("SESSION_DB_PATH", "./data/sessions.db")):
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.fernet = get_fernet_key()

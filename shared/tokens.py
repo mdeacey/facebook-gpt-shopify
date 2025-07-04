@@ -20,7 +20,7 @@ def get_fernet_key() -> Fernet:
     return Fernet(key)
 
 class TokenStorage:
-    def __init__(self, db_path: str = "/app/data/tokens.db"):
+    def __init__(self, db_path: str = os.getenv("TOKEN_DB_PATH", "./data/tokens.db")):
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.fernet = get_fernet_key()
