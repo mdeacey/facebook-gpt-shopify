@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, poll_shopify_data
 from shared.utils import generate_state_token, validate_state_token
-from shared.session import generate_session_id, store_uuid
+from shared.sessions import SessionStorage
+from shared.tokens import TokenStorage
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
 import hmac
 import hashlib
@@ -14,6 +15,8 @@ import base64
 import httpx
 
 router = APIRouter()
+token_storage = TokenStorage()
+session_storage = SessionStorage()
 
 @router.get("/{shop_name}/login")
 async def start_oauth(shop_name: str):
@@ -51,13 +54,13 @@ async def oauth_callback(request: Request):
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
     shop_key = shop.replace('.', '_')
-    os.environ[f"SHOPIFY_ACCESS_TOKEN_{shop_key}"] = token_data["access_token"]
+    token_storage.store_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}", token_data["access_token"], type="token")
 
     user_uuid = str(uuid.uuid4())
-    os.environ[f"USER_UUID_{shop_key}"] = user_uuid
+    token_storage.store_token(f"USER_UUID_{shop_key}", user_uuid, type="uuid")
 
-    session_id = generate_session_id()
-    store_uuid(session_id, user_uuid)
+    session_id = session_storage.generate_session_id()
+    session_storage.store_uuid(session_id, user_uuid)
 
     webhook_test_result = {"status": "failed", "message": "Webhook registration failed"}
     try:
@@ -70,7 +73,7 @@ async def oauth_callback(request: Request):
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"http://localhost:5000/shopify/webhook",
+                f"{os.getenv('SHOPIFY_WEBHOOK_ADDRESS', 'http://localhost:5000/shopify/webhook')}",
                 headers={
                     "X-Shopify-Topic": "products/update",
                     "X-Shopify-Shop-Domain": shop,
@@ -90,14 +93,12 @@ async def oauth_callback(request: Request):
 
     shopify_data = await get_shopify_data(token_data["access_token"], shop)
 
-    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop_key}"
-    access_token = os.getenv(access_token_key)
+    access_token = token_storage.get_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}")
     polling_test_result = await poll_shopify_data(access_token, shop)
     print(f"Polling test result for {shop}: {polling_test_result}")
 
     upload_status_result = {"status": "failed", "message": "Tests failed"}
-    if (
-        webhook_test_result.get("status") == "success"
+    if (webhook_test_result("status") == "success"
         and polling_test_result.get("status") == "success"
     ):
         try:
@@ -141,12 +142,11 @@ async def shopify_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Missing shop domain")
 
     shop_key = shop.replace('.', '_')
-    access_token_key = f"SHOPIFY_ACCESS_TOKEN_{shop_key}"
-    access_token = os.getenv(access_token_key)
+    access_token = token_storage.get_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}")
     if not access_token:
         raise HTTPException(status_code=500, detail="Access token not found")
 
-    user_uuid = os.getenv(f"USER_UUID_{shop_key}")
+    user_uuid = token_storage.get_token(f"USER_UUID_{shop_key}")
     if not user_uuid:
         raise HTTPException(status_code=500, detail="User UUID not found for shop")
 

@@ -1,4 +1,4 @@
-__pycache__# Python
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -12,6 +12,16 @@ ENV/
 # dotenv environment variables
 .env
 .env.*
+
+# SQLite databases
+*.db
+/app/data/tokens.db
+/app/data/sessions.db
+
+# Backup directories and files
+/app/backups/
+/app/scripts/backup_tokens_db.sh
+/app/scripts/backup_sessions_db.sh
 
 # Byte-compiled / optimized / DLL files
 *.pyc
@@ -28,7 +38,7 @@ instance/
 # MacOS
 .DS_Store
 
-# Node (if you have frontend code)
+# Node
 node_modules/
 dist/
 build/

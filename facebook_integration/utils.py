@@ -5,6 +5,9 @@ import hashlib
 from fastapi import HTTPException, Request
 import boto3
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
+from shared.tokens import TokenStorage
+
+token_storage = TokenStorage()
 
 async def exchange_code_for_token(code: str):
     url = "https://graph.facebook.com/v19.0/oauth/access_token"
@@ -74,10 +77,10 @@ async def get_existing_subscriptions(page_id: str, access_token: str):
 
 async def poll_facebook_data(access_token: str, page_id: str) -> dict:
     try:
-        user_access_token = os.getenv("FACEBOOK_USER_ACCESS_TOKEN")
+        user_access_token = token_storage.get_token("FACEBOOK_USER_ACCESS_TOKEN")
         if not user_access_token:
             raise HTTPException(status_code=500, detail="User access token not found")
-        user_uuid = os.getenv(f"PAGE_UUID_{page_id}")
+        user_uuid = token_storage.get_token(f"PAGE_UUID_{page_id}")
         if not user_uuid:
             raise HTTPException(status_code=500, detail=f"User UUID not found for page {page_id}")
         page_data = await get_facebook_data(user_access_token)
@@ -102,14 +105,13 @@ async def poll_facebook_data(access_token: str, page_id: str) -> dict:
 async def daily_poll():
     page_ids = [
         key.replace("FACEBOOK_ACCESS_TOKEN_", "")
-        for key in os.environ
+        for key in token_storage.get_all_tokens_by_type("token")
         if key.startswith("FACEBOOK_ACCESS_TOKEN_")
     ]
 
     for page_id in page_ids:
         try:
-            access_token_key = f"FACEBOOK_ACCESS_TOKEN_{page_id}"
-            access_token = os.getenv(access_token_key)
+            access_token = token_storage.get_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}")
             if access_token:
                 result = await poll_facebook_data(access_token, page_id)
                 if result["status"] == "success":

@@ -1,5 +1,7 @@
 fastapi
 uvicorn
 python-dotenv
-httpx
 boto3
+httpx
+apscheduler
+cryptography

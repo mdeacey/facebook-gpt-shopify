@@ -7,12 +7,15 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions, poll_facebook_data
 from shared.utils import generate_state_token, validate_state_token
-from shared.session import get_uuid, clear_session
+from shared.sessions import SessionStorage
+from shared.tokens import TokenStorage
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
 import boto3
 import httpx
 
 router = APIRouter()
+token_storage = TokenStorage()
+session_storage = SessionStorage()
 
 @router.get("/login")
 async def start_oauth(request: Request):
@@ -29,7 +32,7 @@ async def start_oauth(request: Request):
     session_id = request.cookies.get("session_id")
     if not session_id:
         raise HTTPException(status_code=400, detail="Missing session_id cookie")
-    user_uuid = get_uuid(session_id)
+    user_uuid = session_storage.get_uuid(session_id)
     if not user_uuid:
         raise HTTPException(status_code=400, detail="Invalid or expired session")
 
@@ -57,13 +60,13 @@ async def oauth_callback(request: Request):
 
     session_id = request.cookies.get("session_id")
     if session_id:
-        clear_session(session_id)
+        session_storage.clear_session(session_id)
 
     token_data = await exchange_code_for_token(code)
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
-    os.environ["FACEBOOK_USER_ACCESS_TOKEN"] = token_data["access_token"]
+    token_storage.store_token("FACEBOOK_USER_ACCESS_TOKEN", token_data["access_token"], type="token")
 
     pages = await get_facebook_data(token_data["access_token"])
 
@@ -78,8 +81,8 @@ async def oauth_callback(request: Request):
 
     for page in pages.get("data", []):
         page_id = page["id"]
-        os.environ[f"FACEBOOK_ACCESS_TOKEN_{page_id}"] = page["access_token"]
-        os.environ[f"PAGE_UUID_{page_id}"] = user_uuid
+        token_storage.store_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}", page["access_token"], type="token")
+        token_storage.store_token(f"PAGE_UUID_{page_id}", user_uuid, type="uuid")
 
         existing_subscriptions = await get_existing_subscriptions(page_id, page["access_token"])
         if not any("name" in sub.get("subscribed_fields", []) for sub in existing_subscriptions):
@@ -93,7 +96,7 @@ async def oauth_callback(request: Request):
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            f"http://localhost:5000/facebook/webhook",
+            f"{os.getenv('FACEBOOK_WEBHOOK_ADDRESS', 'http://localhost:5000/facebook/webhook')}",
             headers={
                 "X-Hub-Signature": hmac_signature,
                 "Content-Type": "application/json"
@@ -107,7 +110,7 @@ async def oauth_callback(request: Request):
     upload_status_results = []
     for page in pages.get("data", []):
         page_id = page["id"]
-        access_token = os.getenv(f"FACEBOOK_ACCESS_TOKEN_{page_id}")
+        access_token = token_storage.get_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}")
         polling_result = await poll_facebook_data(access_token, page_id)
         polling_test_results.append({"page_id": page_id, "result": polling_result})
         print(f"Polling test result for page {page_id}: {polling_result}")
@@ -166,13 +169,12 @@ async def facebook_webhook(request: Request):
         if not page_id:
             continue
 
-        access_token_key = f"FACEBOOK_ACCESS_TOKEN_{page_id}"
-        access_token = os.getenv(access_token_key)
+        access_token = token_storage.get_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}")
         if not access_token:
             print(f"Access token not found for page {page_id}")
             continue
 
-        user_uuid = os.getenv(f"PAGE_UUID_{page_id}")
+        user_uuid = token_storage.get_token(f"PAGE_UUID_{page_id}")
         if not user_uuid:
             print(f"User UUID not found for page {page_id}")
             continue
