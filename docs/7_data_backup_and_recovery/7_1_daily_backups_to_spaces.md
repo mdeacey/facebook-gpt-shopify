@@ -8,7 +8,7 @@ To ensure data reliability for the GPT Messenger sales bot, this subchapter impl
 - Completed Chapters 1–6 (OAuth, Persistent Storage, Data Sync, Spaces Integration).
 - FastAPI application running on a DigitalOcean Droplet.
 - SQLite databases (`tokens.db`, `sessions.db`) set up in a configurable path (`TOKEN_DB_PATH`, `SESSION_DB_PATH`, or `./data/`) (Chapter 3).
-- DigitalOcean Spaces bucket and credentials configured (`SPACES_KEY`, `SPACES_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT`) from Subchapter 6.3.
+- DigitalOcean Spaces bucket and credentials configured (`SPACES_API_KEY`, `SPACES_API_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT`) from Subchapter 6.3.
 - `aws` CLI installed on the Droplet (`sudo apt-get install awscli`).
 
 ---
@@ -64,7 +64,7 @@ Create `scripts/backup_tokens_db.sh` to copy and upload `tokens.db`.
 source /app/.env
 
 # Exit if required variables are not set
-if [ -z "$SPACES_KEY" ] || [ -z "$SPACES_SECRET" ] || [ -z "$SPACES_REGION" ] || [ -z "$SPACES_BUCKET" ] || [ -z "$SPACES_ENDPOINT" ]; then
+if [ -z "$SPACES_API_KEY" ] || [ -z "$SPACES_API_SECRET" ] || [ -z "$SPACES_REGION" ] || [ -z "$SPACES_BUCKET" ] || [ -z "$SPACES_ENDPOINT" ]; then
     echo "Error: Missing required environment variables for Spaces"
     exit 1
 fi
@@ -85,8 +85,8 @@ if ! cp "$DB_PATH" "$BACKUP_FILE"; then
 fi
 
 # Configure AWS CLI for Spaces
-export AWS_ACCESS_KEY_ID="$SPACES_KEY"
-export AWS_SECRET_ACCESS_KEY="$SPACES_SECRET"
+export AWS_ACCESS_KEY_ID="$SPACES_API_KEY"
+export AWS_SECRET_ACCESS_KEY="$SPACES_API_SECRET"
 export AWS_DEFAULT_REGION="$SPACES_REGION"
 
 # Upload to Spaces
@@ -117,7 +117,7 @@ Create `scripts/backup_sessions_db.sh` to copy and upload `sessions.db`.
 source /app/.env
 
 # Exit if required variables are not set
-if [ -z "$SPACES_KEY" ] || [ -z "$SPACES_SECRET" ] || [ -z "$SPACES_REGION" ] || [ -z "$SPACES_BUCKET" ] || [ -z "$SPACES_ENDPOINT" ]; then
+if [ -z "$SPACES_API_KEY" ] || [ -z "$SPACES_API_SECRET" ] || [ -z "$SPACES_REGION" ] || [ -z "$SPACES_BUCKET" ] || [ -z "$SPACES_ENDPOINT" ]; then
     echo "Error: Missing required environment variables for Spaces"
     exit 1
 fi
@@ -138,8 +138,8 @@ if ! cp "$DB_PATH" "$BACKUP_FILE"; then
 fi
 
 # Configure AWS CLI for Spaces
-export AWS_ACCESS_KEY_ID="$SPACES_KEY"
-export AWS_SECRET_ACCESS_KEY="$SPACES_SECRET"
+export AWS_ACCESS_KEY_ID="$SPACES_API_KEY"
+export AWS_SECRET_ACCESS_KEY="$SPACES_API_SECRET"
 export AWS_DEFAULT_REGION="$SPACES_REGION"
 
 # Upload to Spaces
@@ -223,8 +223,8 @@ SHOPIFY_API_SECRET=your_shopify_api_secret
 SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
 SHOPIFY_WEBHOOK_ADDRESS=https://your-app.com/shopify/webhook
 # DigitalOcean Spaces credentials
-SPACES_KEY=your_spaces_key
-SPACES_SECRET=your_spaces_secret
+SPACES_API_KEY=your_spaces_key
+SPACES_API_SECRET=your_spaces_secret
 SPACES_REGION=nyc3
 SPACES_BUCKET=gpt-messenger-data
 SPACES_ENDPOINT=https://nyc3.digitaloceanspaces.com
@@ -249,8 +249,8 @@ aws configure
 ```
 
 Enter:
-- **AWS Access Key ID**: `SPACES_KEY`
-- **AWS Secret Access Key**: `SPACES_SECRET`
+- **AWS Access Key ID**: `SPACES_API_KEY`
+- **AWS Secret Access Key**: `SPACES_API_SECRET`
 - **Default region name**: `SPACES_REGION` (e.g., `nyc3`)
 - **Default output format**: `json`
 

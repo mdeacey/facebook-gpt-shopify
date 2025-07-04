@@ -2,7 +2,7 @@
 ## Subchapter 6.3: Creating a DigitalOcean Spaces Bucket
 
 ### Introduction
-This subchapter guides you through creating a DigitalOcean Spaces bucket to store Facebook and Shopify data for the GPT Messenger sales bot. The bucket provides S3-compatible storage for persistent, scalable data management, replacing temporary file storage from Chapters 4–5. We configure the bucket and generate API credentials (`SPACES_KEY`, `SPACES_SECRET`) for use in Subchapters 6.1–6.2, organizing data by UUID (`users/<uuid>/...`) from `TokenStorage` (Chapter 3). The process is performed in the DigitalOcean control panel, ensuring compatibility with the FastAPI application running on a Droplet.
+This subchapter guides you through creating a DigitalOcean Spaces bucket to store Facebook and Shopify data for the GPT Messenger sales bot. The bucket provides S3-compatible storage for persistent, scalable data management, replacing temporary file storage from Chapters 4–5. We configure the bucket and generate API credentials (`SPACES_API_KEY`, `SPACES_API_SECRET`) for use in Subchapters 6.1–6.2, organizing data by UUID (`users/<uuid>/...`) from `TokenStorage` (Chapter 3). The process is performed in the DigitalOcean control panel, ensuring compatibility with the FastAPI application running on a Droplet.
 
 ### Prerequisites
 - Completed Chapters 1–5 and Subchapters 6.1–6.2.
@@ -74,7 +74,7 @@ Click “Generate Key”. Copy the `Key` and `Secret` displayed.
 **Screenshot Reference**: Shows the API section with the generated Spaces key.
 
 **Why?**
-- Provides `SPACES_KEY` and `SPACES_SECRET` for `boto3` authentication in Subchapters 6.1–6.2.
+- Provides `SPACES_API_KEY` and `SPACES_API_SECRET` for `boto3` authentication in Subchapters 6.1–6.2.
 - **Production Note**: Rotate keys regularly and set expirations.
 
 ### Step 6: Update Environment Variables
@@ -93,8 +93,8 @@ SHOPIFY_API_SECRET=your_shopify_api_secret
 SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
 SHOPIFY_WEBHOOK_ADDRESS=https://your-app.com/shopify/webhook
 # DigitalOcean Spaces credentials
-SPACES_KEY=your_spaces_key
-SPACES_SECRET=your_spaces_secret
+SPACES_API_KEY=your_spaces_key
+SPACES_API_SECRET=your_spaces_secret
 SPACES_REGION=nyc3
 SPACES_BUCKET=gpt-messenger-data
 SPACES_ENDPOINT=https://nyc3.digitaloceanspaces.com

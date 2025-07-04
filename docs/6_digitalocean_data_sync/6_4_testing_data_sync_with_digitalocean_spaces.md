@@ -234,7 +234,7 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
    - **Fix**: Check `tokens.db` with `sqlite3 /app/data/tokens.db "SELECT key FROM tokens;"`.
 3. **Spaces Upload Failure**:
    - **Cause**: Invalid credentials or bucket settings.
-   - **Fix**: Verify `SPACES_KEY`, `SPACES_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT` in `.env`.
+   - **Fix**: Verify `SPACES_API_KEY`, `SPACES_API_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT` in `.env`.
 4. **Missing `session_id` Cookie**:
    - **Fix**: Run Shopify OAuth to set the cookie.
 5. **Empty Data**:
