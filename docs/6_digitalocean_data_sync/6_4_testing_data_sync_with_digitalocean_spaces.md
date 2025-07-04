@@ -2,7 +2,7 @@
 ## Subchapter 6.4: Testing Data Sync with DigitalOcean Spaces
 
 ### Introduction
-With DigitalOcean Spaces integrated for Facebook (Subchapter 6.1) and Shopify (Subchapter 6.2) data, this subchapter verifies that webhook and polling systems correctly upload data to the UUID-based bucket structure (`<uuid>/facebook_messenger/<page_id>/page_data.json`, `<uuid>/shopify/shopify_data.json`). Tests are executed during OAuth flows, using the session-based UUID mechanism (Chapter 3) to ensure production-ready operation for multiple users. We confirm data storage in Spaces, check JSON responses, and troubleshoot issues to ensure the GPT Messenger sales bot has reliable, up-to-date data.
+With DigitalOcean Spaces integrated for Facebook (Subchapter 6.1) and Shopify (Subchapter 6.2) data, this subchapter verifies that webhook and polling systems correctly upload data to the UUID-based bucket structure (`users/<uuid>/facebook_messenger/<page_id>/page_data.json`, `users/<uuid>/shopify/shopify_data.json`). Tests are executed during OAuth flows, using the session-based UUID mechanism (Chapter 3) to ensure production-ready operation for multiple users. We confirm data storage in Spaces, check JSON responses, and troubleshoot issues to ensure the GPT Messenger sales bot has reliable, up-to-date data.
 
 ### Prerequisites
 - Completed Chapters 1–5 and Subchapters 6.1–6.3.
@@ -39,7 +39,7 @@ Tests for webhooks, polling, and Spaces uploads are executed during the OAuth ca
        "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
        "token_data": {
          "access_token": "shpua_9a72896d590dbff5d3cf818f49710f67",
-         "scope": "read_product_listings,read_inventory,read_discounts,read_locations,read_products"
+         "scope": "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_products,write_inventory"
        },
        "shopify_data": {
          "data": {
@@ -149,16 +149,16 @@ Tests for webhooks, polling, and Spaces uploads are executed during the OAuth ca
 - Shopify logs:
   ```
   Received products/update event from acme-7cu19ngr.myshopify.com: {'product': {'id': 12345, 'title': 'Updated Snowboard'}}
-  Uploaded data to Spaces for acme-7cu19ngr.myshopify.com
+  Updated data in Spaces for acme-7cu19ngr.myshopify.com via products/update
   ```
 - Facebook logs:
   ```
   Received webhook event for page 101368371725791: {'id': '101368371725791', 'changes': [{'field': 'name', 'value': 'New Store Name'}]}
-  Uploaded data to Spaces for page 101368371725791
+  Updated data in Spaces for page 101368371725791
   ```
 
 **Why?**
-- Confirms `/shopify/webhook` and `/facebook/webhook` process events and upload to Spaces.
+- Confirms `/shopify/webhook` and `/facebook/webhook` process events and upload to Spaces with the `users/` prefix.
 
 ### Step 3: Verify Polling Functionality
 **Action**: Manually trigger daily polling.
@@ -178,16 +178,16 @@ Tests for webhooks, polling, and Spaces uploads are executed during the OAuth ca
 - Shopify logs:
   ```
   Polled data for shop acme-7cu19ngr.myshopify.com: Success
-  Uploaded data to Spaces for acme-7cu19ngr.myshopify.com
+  Polled and uploaded data for acme-7cu19ngr.myshopify.com: Success
   ```
 - Facebook logs:
   ```
   Polled data for page 101368371725791: Success
-  Uploaded data to Spaces for page 101368371725791
+  Polled and uploaded data for page 101368371725791: Success
   ```
 
 **Why?**
-- Confirms `poll_shopify_data` and `poll_facebook_data` retrieve data and upload to Spaces.
+- Confirms `poll_shopify_data` and `poll_facebook_data` retrieve data and upload to Spaces with the `users/` prefix.
 
 ### Step 4: Verify Spaces Storage
 **Action**: Check the Spaces bucket for uploaded files.
@@ -195,12 +195,12 @@ Tests for webhooks, polling, and Spaces uploads are executed during the OAuth ca
 **Instructions**:
 1. Log into the DigitalOcean Control Panel and navigate to **Spaces > your_bucket_name**.
 2. Verify files exist:
-   - `<uuid>/shopify/shopify_data.json`
-   - `<uuid>/facebook_messenger/101368371725791/page_data.json`
+   - `users/<uuid>/shopify/shopify_data.json`
+   - `users/<uuid>/facebook_messenger/101368371725791/page_data.json`
 3. Download and confirm contents match the JSON responses from Step 1.
 
 **Expected Content** (abridged):
-- Shopify (`<uuid>/shopify/shopify_data.json`):
+- Shopify (`users/<uuid>/shopify/shopify_data.json`):
   ```json
   {
     "data": {
@@ -221,7 +221,7 @@ Tests for webhooks, polling, and Spaces uploads are executed during the OAuth ca
     }
   }
   ```
-- Facebook (`<uuid>/facebook_messenger/101368371725791/page_data.json`):
+- Facebook (`users/<uuid>/facebook_messenger/101368371725791/page_data.json`):
   ```json
   {
     "data": [
@@ -236,7 +236,7 @@ Tests for webhooks, polling, and Spaces uploads are executed during the OAuth ca
   ```
 
 **Why?**
-- Confirms data is stored in the UUID-based structure in Spaces.
+- Confirms data is stored in the UUID-based structure with the `users/` prefix in Spaces.
 
 ### Step 5: Troubleshoot Issues
 **Action**: Diagnose and fix issues if JSON responses or logs show failures.
@@ -276,7 +276,7 @@ Tests for webhooks, polling, and Spaces uploads are executed during the OAuth ca
 - Uses JSON responses and logs to debug integration issues.
 
 ### Summary: Why This Subchapter Matters
-- **Storage Verification**: Confirms data is correctly uploaded to Spaces.
+- **Storage Verification**: Confirms data is correctly uploaded to Spaces with the `users/` prefix.
 - **UUID Integration**: Ensures data is organized by UUID for multi-platform linking.
 - **Security**: Validates session-based UUID retrieval and non-sensitive data storage.
 - **Bot Readiness**: Provides reliable data for customer interactions.
