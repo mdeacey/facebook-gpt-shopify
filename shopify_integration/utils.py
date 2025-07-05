@@ -30,12 +30,17 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
         "Content-Type": "application/json"
     }
 
-    query = """
-    query SalesBotQuery {
+    metadata_query = """
+    query ShopMetadataQuery {
       shop {
         name
         primaryDomain { url }
       }
+    }
+    """
+
+    products_query = """
+    query ProductsQuery {
       products(first: 50, sortKey: RELEVANCE) {
         edges {
           node {
@@ -112,16 +117,29 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
     }
     """
 
+    metadata_result = {}
+    products_result = {}
     for attempt in range(retries):
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.post(url, headers=headers, json={"query": query})
+
+                response = await client.post(url, headers=headers, json={"query": metadata_query})
                 response.raise_for_status()
-                response_data = response.json()
-                if "errors" in response_data:
-                    error_message = "; ".join([error["message"] for error in response_data["errors"]])
-                    raise HTTPException(status_code=400, detail=f"GraphQL query failed: {error_message}")
-                return response_data
+                metadata_data = response.json()
+                if "errors" in metadata_data:
+                    error_message = "; ".join([error["message"] for error in metadata_data["errors"]])
+                    raise HTTPException(status_code=400, detail=f"GraphQL metadata query failed: {error_message}")
+                metadata_result = metadata_data["data"]
+
+                response = await client.post(url, headers=headers, json={"query": products_query})
+                response.raise_for_status()
+                products_data = response.json()
+                if "errors" in products_data:
+                    error_message = "; ".join([error["message"] for error in products_data["errors"]])
+                    raise HTTPException(status_code=400, detail=f"GraphQL products query failed: {error_message}")
+                products_result = products_data["data"]
+
+                return {"metadata": metadata_result, "products": products_result}
         except httpx.HTTPStatusError as e:
             if attempt == retries - 1 or e.response.status_code != 429:
                 raise
@@ -205,12 +223,20 @@ async def poll_shopify_data(access_token: str, shop: str) -> dict:
             aws_access_key_id=os.getenv("SPACES_API_KEY"),
             aws_secret_access_key=os.getenv("SPACES_API_SECRET")
         )
-        spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
-        if has_data_changed(shopify_data, spaces_key, s3_client):
-            upload_to_spaces(shopify_data, spaces_key, s3_client)
-            print(f"Polled and uploaded data for {shop}: Success")
+
+        metadata_key = f"users/{user_uuid}/shopify/shop_metadata.json"
+        if has_data_changed(shopify_data["metadata"], metadata_key, s3_client):
+            upload_to_spaces(shopify_data["metadata"], metadata_key, s3_client)
+            print(f"Polled and uploaded metadata for {shop}: Success")
         else:
-            print(f"Polled data for {shop}: No upload needed, data unchanged")
+            print(f"Polled metadata for {shop}: No upload needed, data unchanged")
+
+        products_key = f"users/{user_uuid}/shopify/shop_products.json"
+        if has_data_changed(shopify_data["products"], products_key, s3_client):
+            upload_to_spaces(shopify_data["products"], products_key, s3_client)
+            print(f"Polled and uploaded products for {shop}: Success")
+        else:
+            print(f"Polled products for {shop}: No upload needed, data unchanged")
         return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}

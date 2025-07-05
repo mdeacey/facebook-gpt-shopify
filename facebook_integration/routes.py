@@ -93,7 +93,7 @@ async def oauth_callback(request: Request):
         else:
             print(f"Webhook subscription for 'name,category,messages' already exists for page {page_id}")
 
-        spaces_key = f"users/{user_uuid}/facebook_messenger/{page_id}/page_data.json"
+        spaces_key = f"users/{user_uuid}/facebook/{page_id}/page_metadata.json"
         if has_data_changed(pages, spaces_key, s3_client):
             upload_to_spaces(pages, spaces_key, s3_client)
             print(f"Uploaded metadata to Spaces for page {page_id}")
@@ -158,10 +158,10 @@ async def oauth_callback(request: Request):
             metadata_result.get("status") == "success" and
             conv_result.get("status") == "success"):
             try:
-                metadata_key = f"users/{user_uuid}/facebook_messenger/{page_id}/page_data.json"
+                metadata_key = f"users/{user_uuid}/facebook/{page_id}/page_metadata.json"
                 response = s3_client.head_object(Bucket=os.getenv("SPACES_BUCKET"), Key=metadata_key)
                 if response["ResponseMetadata"]["HTTPStatusCode"] == 200:
-                    conversation_key = f"users/{user_uuid}/facebook_messenger/{page_id}/conversations/test_user_id.json"
+                    conversation_key = f"users/{user_uuid}/facebook/{page_id}/conversations/test_user_id.json"
                     response = s3_client.head_object(Bucket=os.getenv("SPACES_BUCKET"), Key=conversation_key)
                     if response["ResponseMetadata"]["HTTPStatusCode"] == 200:
                         upload_status_result = {"status": "success"}
@@ -235,7 +235,7 @@ async def facebook_webhook(request: Request):
                 if not sender_id or not recipient_id or sender_id == page_id:
                     continue
 
-                spaces_key = f"users/{user_uuid}/facebook_messenger/{page_id}/conversations/{sender_id}.json"
+                spaces_key = f"users/{user_uuid}/facebook/{page_id}/conversations/{sender_id}.json"
                 conversation = []
                 is_new_conversation = False
                 try:
@@ -254,7 +254,7 @@ async def facebook_webhook(request: Request):
         if "changes" in entry:
             try:
                 page_data = await get_facebook_data(access_token)
-                spaces_key = f"users/{user_uuid}/facebook_messenger/{page_id}/page_data.json"
+                spaces_key = f"users/{user_uuid}/facebook/{page_id}/page_metadata.json"
                 if has_data_changed(page_data, spaces_key, s3_client):
                     upload_to_spaces(page_data, spaces_key, s3_client)
                     print(f"Uploaded metadata to Spaces for page {page_id}")

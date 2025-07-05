@@ -108,12 +108,14 @@ async def oauth_callback(request: Request):
                 aws_access_key_id=os.getenv("SPACES_API_KEY"),
                 aws_secret_access_key=os.getenv("SPACES_API_SECRET")
             )
-            spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
-            if has_data_changed(shopify_data, spaces_key, s3_client):
-                upload_to_spaces(shopify_data, spaces_key, s3_client)
-                print(f"Uploaded data to Spaces for {shop}")
-            else:
-                print(f"No upload needed for {shop}: Data unchanged")
+            metadata_key = f"users/{user_uuid}/shopify/shop_metadata.json"
+            products_key = f"users/{user_uuid}/shopify/shop_products.json"
+            if has_data_changed(shopify_data["metadata"], metadata_key, s3_client):
+                upload_to_spaces(shopify_data["metadata"], metadata_key, s3_client)
+                print(f"Uploaded metadata to Spaces for {shop}")
+            if has_data_changed(shopify_data["products"], products_key, s3_client):
+                upload_to_spaces(shopify_data["products"], products_key, s3_client)
+                print(f"Uploaded products to Spaces for {shop}")
             upload_status_result = {"status": "success"}
         except Exception as e:
             upload_status_result = {"status": "failed", "message": f"Spaces upload failed: {str(e)}"}
@@ -154,7 +156,6 @@ async def shopify_webhook(request: Request):
 
     try:
         shopify_data = await get_shopify_data(access_token, shop)
-        spaces_key = f"users/{user_uuid}/shopify/shopify_data.json"
         session = boto3.session.Session()
         s3_client = session.client(
             "s3",
@@ -163,11 +164,14 @@ async def shopify_webhook(request: Request):
             aws_access_key_id=os.getenv("SPACES_API_KEY"),
             aws_secret_access_key=os.getenv("SPACES_API_SECRET")
         )
-        if has_data_changed(shopify_data, spaces_key, s3_client):
-            upload_to_spaces(shopify_data, spaces_key, s3_client)
-            print(f"Updated data in Spaces for {shop} via {event_type}")
-        else:
-            print(f"No update needed in Spaces for {shop} via {event_type}: Data unchanged")
+        metadata_key = f"users/{user_uuid}/shopify/shop_metadata.json"
+        products_key = f"users/{user_uuid}/shopify/shop_products.json"
+        if has_data_changed(shopify_data["metadata"], metadata_key, s3_client):
+            upload_to_spaces(shopify_data["metadata"], metadata_key, s3_client)
+            print(f"Updated metadata in Spaces for {shop} via {event_type}")
+        if has_data_changed(shopify_data["products"], products_key, s3_client):
+            upload_to_spaces(shopify_data["products"], products_key, s3_client)
+            print(f"Updated products in Spaces for {shop} via {event_type}")
     except Exception as e:
         print(f"Failed to update Spaces for {shop} via {event_type}: {str(e)}")
 

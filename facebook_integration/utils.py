@@ -93,7 +93,7 @@ async def poll_facebook_data(page_id: str) -> dict:
             aws_access_key_id=os.getenv("SPACES_API_KEY"),
             aws_secret_access_key=os.getenv("SPACES_API_SECRET")
         )
-        spaces_key = f"users/{user_uuid}/facebook_messenger/{page_id}/page_data.json"
+        spaces_key = f"users/{user_uuid}/facebook/{page_id}/page_metadata.json"
         if has_data_changed(page_data, spaces_key, s3_client):
             upload_to_spaces(page_data, spaces_key, s3_client)
             print(f"Polled and uploaded metadata for page {page_id}: Success")
@@ -132,7 +132,7 @@ async def poll_facebook_conversations(access_token: str, page_id: str) -> dict:
                 sender_id = next((p["id"] for p in conversation["participants"]["data"] if p["id"] != page_id), None)
                 if not sender_id:
                     continue
-                spaces_key = f"users/{user_uuid}/facebook_messenger/{page_id}/conversations/{sender_id}.json"
+                spaces_key = f"users/{user_uuid}/facebook/{page_id}/conversations/{sender_id}.json"
                 existing_payloads = []
                 is_new_conversation = False
                 try:
