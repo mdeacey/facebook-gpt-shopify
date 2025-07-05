@@ -113,7 +113,7 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
 
     # Call GenAI agent
     headers = {
-        "Authorization": f"Bearer {os.getenv('GENAI_API_KEY')}",
+        "Authorization": f"Bearer {os.getenv('AGENT_API_KEY')}",
         "Content-Type": "application/json"
     }
     payload = {
@@ -257,7 +257,7 @@ async def facebook_webhook(request: Request):
 ### Environment Variables
 
 The following environment variables are required for the GenAI integration:
-- `GENAI_API_KEY`: The API key for accessing the DigitalOcean GenAI API.
+- `AGENT_API_KEY`: The API key for accessing the DigitalOcean GenAI API.
 - `GENAI_ENDPOINT` (optional): The endpoint for the GenAI API, defaulting to `https://api.genai.digitalocean.com/v1/llama3.3-70b-instruct`.
 
 Ensure these are set in the `.env` file or environment configuration, alongside existing variables like `SPACES_API_KEY` and `FACEBOOK_APP_SECRET`.

@@ -52,7 +52,7 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
     )
 
     headers = {
-        "Authorization": f"Bearer {os.getenv('GENAI_API_KEY')}",
+        "Authorization": f"Bearer {os.getenv('AGENT_API_KEY')}",
         "Content-Type": "application/json"
     }
     payload = {
