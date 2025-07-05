@@ -103,6 +103,12 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
         "type": "conversations",
         "result": {"status": "success"}
       }
+    ],
+    "upload_status": [
+      {
+        "page_id": "101368371725791",
+        "result": {"status": "success"}
+      }
     ]
   }
   ```
@@ -110,22 +116,26 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
   ```
   INFO:     127.0.0.1:0 - "GET /facebook/login HTTP/1.1" 307 Temporary Redirect
   Webhook subscription for 'name,category,messages' already exists for page 101368371725791
-  Uploaded data to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/page_data.json
+  Uploaded metadata to Spaces for page 101368371725791
   Received webhook event for page 101368371725791: {'id': '101368371725791', 'changes': [{'field': 'name', 'value': 'Test Page'}]}
-  Uploaded data to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/page_data.json
+  Uploaded metadata to Spaces for page 101368371725791
   Metadata webhook test result for page 101368371725791: {'status': 'success'}
   Received webhook event for page 101368371725791: {'id': '101368371725791', 'messaging': [...]}
   New conversation started for sender test_user_id on page 101368371725791
   Uploaded conversation payload to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/conversations/test_user_id.json (new: True)
   Message webhook test result for page 101368371725791: {'status': 'success'}
+  Polled metadata for page 101368371725791: Success
   Metadata polling test result for page 101368371725791: {'status': 'success'}
+  Polled conversations for page 101368371725791: Success
   Conversation polling test result for page 101368371725791: {'status': 'success'}
+  Upload status verified for page 101368371725791: Success
   INFO:     127.0.0.1:0 - "GET /facebook/callback?code=...&state=... HTTP/1.1" 200 OK
   ```
 
 **Why?**
 - Confirms webhook and polling upload metadata and conversation payloads to Spaces using `TokenStorage`.
 - Verifies new conversation handling for the message webhook test.
+- Ensures `upload_status` confirms successful uploads.
 
 ### Step 2: Test Shopify Data Sync via OAuth Flow
 **Action**: Run the Shopify OAuth flow to test webhook and polling uploads.
@@ -185,7 +195,7 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
 
 **Why?**
 - Confirms webhook and polling upload Shopify data to Spaces using `TokenStorage`.
-- Unaffected by Chapter 4’s conversation handling updates.
+- Unaffected by recent changes to Facebook data handling.
 
 ### Step 3: Verify Webhook Functionality
 **Action**: Simulate updates to trigger webhooks.
@@ -200,7 +210,7 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
 - Facebook metadata logs:
   ```
   Received webhook event for page 101368371725791: {'id': '101368371725791', 'changes': [{'field': 'name', 'value': 'New Store Name'}]}
-  Uploaded data to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/page_data.json
+  Uploaded metadata to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/page_data.json
   ```
 - Facebook message logs (first message):
   ```
@@ -254,8 +264,7 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
   ```
 
 **Why?**
-- Confirms polling functions (Subchapters 4.3, 5.2) upload to Spaces.
-- Verifies conversation polling maintains payload consistency and new vs. continuing checks.
+- Confirms polling functions (Subchapters 4.3, 5.2) upload to Spaces, with `poll_facebook_data` using the updated signature.
 
 ### Step 5: Verify Spaces Storage
 **Action**: Check the Spaces bucket for uploaded files.
@@ -343,9 +352,9 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
      - Check the `message` (e.g., “User access token not found” or “Conversation fetch failed”).
      - Verify tokens in `tokens.db` using `sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"`.
      - Check logs for API errors (e.g., HTTP 400 or 429).
-3. **Spaces Upload Failure**:
-   - **Cause**: Invalid credentials or bucket settings.
-   - **Fix**: Verify `SPACES_API_KEY`, `SPACES_API_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT` in `.env`.
+3. **Upload Status Failure (`upload_status: [{"page_id": "...", "result": {"status": "failed", "message": "..."}]`)**:
+   - **Cause**: Upload verification failed.
+   - **Fix**: Verify `SPACES_API_KEY`, `SPACES_API_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT` in `.env`; check Spaces bucket for files.
 4. **Missing `session_id` Cookie**:
    - **Cause**: Shopify OAuth not completed.
    - **Fix**: Run `/shopify/acme-7cu19ngr/login` to set the cookie.
