@@ -2,7 +2,7 @@
 ## Subchapter 5.1: Setting Up Shopify Webhooks for Real-Time Updates
 
 ### Introduction
-Shopify webhooks enable real-time notifications for product updates (e.g., title, inventory changes) to keep the GPT Messenger sales bot’s data current. This subchapter sets up a secure webhook endpoint in the FastAPI application, integrating HMAC verification and registering webhooks during the Shopify OAuth flow (Chapter 2) with appropriate permissions (`read_products`, `read_inventory`). The webhook system uses the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user and stores data temporarily in `<shop_name>/shopify_data.json`, preparing for cloud storage in Chapter 6. The focus is on non-sensitive product data, using `TokenStorage` and `SessionStorage` for secure, production-ready operation.
+Shopify webhooks enable real-time notifications for product updates (e.g., title, inventory changes) to keep the GPT Messenger sales bot’s data current. This subchapter sets up a secure webhook endpoint in the FastAPI application, integrating HMAC verification and registering webhooks during the Shopify OAuth flow (Chapter 2) with appropriate permissions (`read_products`, `read_inventory`). The webhook system uses the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user and stores data temporarily in `<shop_name>/shop_metadata.json` and `<shop_name>/shop_products.json`, preparing for cloud storage in Chapter 6 (`users/<uuid>/shopify/<shop_name>/shop_metadata.json` and `users/<uuid>/shopify/<shop_name>/shop_products.json`). The focus is on non-sensitive shop and product data, using `TokenStorage` and `SessionStorage` for secure, production-ready operation.
 
 ### Prerequisites
 - Completed Chapters 1–4 (Facebook OAuth, Shopify OAuth, Persistent Storage and User Identification, Facebook Data Sync).
@@ -23,15 +23,20 @@ Update the `.env` file to include webhook-specific variables for Shopify, in add
 FACEBOOK_APP_ID=your_facebook_app_id
 FACEBOOK_APP_SECRET=your_facebook_app_secret
 FACEBOOK_REDIRECT_URI=http://localhost:5000/facebook/callback
-http://localhost:5000/facebook/webhook
+# Webhook configuration
+FACEBOOK_WEBHOOK_ADDRESS=http://localhost:5000/facebook/webhook
 FACEBOOK_VERIFY_TOKEN=your_verify_token
 # Shopify OAuth credentials
 SHOPIFY_API_KEY=your_shopify_api_key
 SHOPIFY_API_SECRET=your_shopify_api_secret
 SHOPIFY_REDIRECT_URI=http://localhost:5000/shopify/callback
-http://localhost:5000/shopify/webhook
+# Webhook configuration
+SHOPIFY_WEBHOOK_ADDRESS=http://localhost:5000/shopify/webhook
 # Shared secret for state token CSRF protection
 STATE_TOKEN_SECRET=replace_with_secure_token
+# Database paths for SQLite storage
+TOKEN_DB_PATH=./data/tokens.db
+SESSION_DB_PATH=./data/sessions.db
 ```
 
 **Notes**:
@@ -76,7 +81,7 @@ The project structure builds on Chapters 1–4:
 - Excludes Spaces integration (Chapter 6).
 
 ### Step 3: Update `shopify_integration/utils.py`
-Add webhook registration and verification functions, using `TokenStorage`.
+Add webhook registration and verification functions, splitting the GraphQL query into metadata and products, using `TokenStorage`.
 
 ```python
 import os
@@ -103,15 +108,39 @@ async def exchange_code_for_token(code: str, shop: str):
         response.raise_for_status()
         return response.json()
 
-async def get_shopify_data(access_token: str, shop: str, retries=3):
+async def get_shopify_metadata(access_token: str, shop: str, retries=3):
     url = f"https://{shop}/admin/api/2025-04/graphql.json"
     headers = {
         "X-Shopify-Access-Token": access_token,
         "Content-Type": "application/json"
     }
     query = """
-    query SalesBotQuery {
+    query ShopMetadataQuery {
       shop { name primaryDomain { url } }
+    }
+    """
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=headers, json={"query": query})
+                response.raise_for_status()
+                data = response.json()
+                if "errors" in data:
+                    raise HTTPException(status_code=400, detail=f"GraphQL error: {data['errors']}")
+                return data
+        except httpx.HTTPStatusError as e:
+            if attempt == retries - 1 or e.response.status_code != 429:
+                raise
+            await asyncio.sleep(2 ** attempt)
+
+async def get_shopify_products(access_token: str, shop: str, retries=3):
+    url = f"https://{shop}/admin/api/2025-04/graphql.json"
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
+    query = """
+    query ShopProductsQuery {
       products(first: 50, sortKey: RELEVANCE) {
         edges {
           node {
@@ -225,18 +254,20 @@ async def register_webhooks(shop: str, access_token: str):
             print(f"Webhook registered for {shop}: products/update")
         else:
             print(f"Failed to register webhook for {shop}: {response.text}")
+            raise HTTPException(status_code=500, detail=f"Failed to register webhook: {response.text}")
 ```
 
 **Why?**
-- **OAuth Functions**: Reuses token exchange and data fetching from Chapter 2.
+- **OAuth Functions**: Reuses token exchange from Chapter 2.
+- **Split Queries**: Separates `get_shopify_data` into `get_shopify_metadata` (shop details) and `get_shopify_products` (products, discounts, collections) for modularity, aligning with the split into `shop_metadata.json` and `shop_products.json`.
 - **Webhook Verification**: Validates incoming webhooks with HMAC.
 - **Webhook Registration**: Subscribes to `products/update` events during OAuth.
 - **TokenStorage**: Initialized for token retrieval.
 - **Error Handling**: Ensures robust webhook setup.
-- **Typo Fix**: Corrected `subcribed_fields` to `subscribed_fields` in context (not in code here).
+- **Temporary Storage**: Prepares for split storage in `<shop_name>/shop_metadata.json` and `<shop_name>/shop_products.json`, transitioning to Spaces in Chapter 6.
 
 ### Step 4: Update `shopify_integration/routes.py`
-Add a webhook endpoint and test webhook registration in `/callback`, using `TokenStorage` and `SessionStorage`.
+Add a webhook endpoint and test webhook registration in `/callback`, using `TokenStorage` and `SessionStorage`, storing data in split files.
 
 ```python
 import os
@@ -244,7 +275,7 @@ import uuid
 import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks
+from .utils import exchange_code_for_token, get_shopify_metadata, get_shopify_products, verify_hmac, register_webhooks
 from shared.utils import generate_state_token, validate_state_token
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
@@ -328,17 +359,23 @@ async def oauth_callback(request: Request):
         webhook_test_result = {"status": "failed", "message": f"Webhook setup failed: {str(e)}"}
         print(f"Webhook setup failed for {shop}: {str(e)}")
 
-    shopify_data = await get_shopify_data(token_data["access_token"], shop)
+    shop_metadata = await get_shopify_metadata(token_data["access_token"], shop)
+    shop_products = await get_shopify_products(token_data["access_token"], shop)
 
     os.makedirs(shop, exist_ok=True)
-    with open(f"{shop}/shopify_data.json", "w") as f:
-        json.dump(shopify_data, f)
-    print(f"Wrote data to {shop}/shopify_data.json for {shop}")
+    with open(f"{shop}/shop_metadata.json", "w") as f:
+        json.dump(shop_metadata, f)
+    with open(f"{shop}/shop_products.json", "w") as f:
+        json.dump(shop_products, f)
+    print(f"Wrote metadata to {shop}/shop_metadata.json and products to {shop}/shop_products.json for {shop}")
 
     response = JSONResponse(content={
         "user_uuid": user_uuid,
         "token_data": token_data,
-        "shopify_data": shopify_data,
+        "shopify_data": {
+            "metadata": shop_metadata,
+            "products": shop_products
+        },
         "webhook_test": webhook_test_result
     })
     response.set_cookie(key="session_id", value=session_id, httponly=True, max_age=3600)
@@ -367,11 +404,14 @@ async def shopify_webhook(request: Request):
     print(f"Received {event_type} event from {shop}: {payload}")
 
     try:
-        shopify_data = await get_shopify_data(access_token, shop)
+        shop_metadata = await get_shopify_metadata(access_token, shop)
+        shop_products = await get_shopify_products(access_token, shop)
         os.makedirs(shop, exist_ok=True)
-        with open(f"{shop}/shopify_data.json", "w") as f:
-            json.dump(shopify_data, f)
-        print(f"Wrote data to {shop}/shopify_data.json for {shop}")
+        with open(f"{shop}/shop_metadata.json", "w") as f:
+            json.dump(shop_metadata, f)
+        with open(f"{shop}/shop_products.json", "w") as f:
+            json.dump(shop_products, f)
+        print(f"Wrote metadata to {shop}/shop_metadata.json and products to {shop}/shop_products.json for {shop}")
     except Exception as e:
         print(f"Failed to write data for {shop}: {str(e)}")
 
@@ -380,10 +420,10 @@ async def shopify_webhook(request: Request):
 
 **Why?**
 - **Login Endpoint**: Initiates OAuth with scopes for products and inventory (Chapter 2).
-- **Callback Endpoint**: Registers webhooks, tests the webhook endpoint, stores data in `<shop_name>/shopify_data.json`, sets the `session_id` cookie, and returns results with `user_uuid`.
+- **Callback Endpoint**: Registers webhooks, tests the webhook endpoint, stores data in `<shop_name>/shop_metadata.json` and `<shop_name>/shop_products.json`, sets the `session_id` cookie, and returns results with `user_uuid`. The split into metadata and products enhances modularity, preparing for Spaces (`users/<uuid>/shopify/<shop_name>/shop_metadata.json` and `users/<uuid>/shopify/<shop_name>/shop_products.json`) in Chapter 6.
 - **Webhook Endpoint**: Processes `products/update` events, storing updates in temporary files using `TokenStorage`.
 - **Security**: Uses HMAC verification, excludes tokens, and sets a secure cookie.
-- **Temporary Storage**: Prepares for cloud storage in Chapter 6.
+- **Temporary Storage**: Splits data for clarity and scalability.
 
 ### Step 5: Configure Webhook in Shopify Admin
 **Action**: Set up the webhook in the Shopify Admin:
@@ -423,7 +463,7 @@ apscheduler
 - Excludes `boto3` (introduced in Chapter 6).
 
 ### Step 7: Update `.gitignore`
-Ensure SQLite databases are excluded.
+Ensure SQLite databases and temporary Shopify files are excluded.
 
 ```plaintext
 __pycache__/
@@ -431,10 +471,12 @@ __pycache__/
 .env
 .DS_Store
 *.db
+facebook/
+*.myshopify.com/
 ```
 
 **Why?**
-- Excludes `tokens.db` and `sessions.db`.
+- Excludes `tokens.db`, `sessions.db`, and temporary Shopify files (`<shop_name>/shop_metadata.json`, `<shop_name>/shop_products.json`).
 
 ### Step 8: Testing Preparation
 To verify the webhook setup:
@@ -449,7 +491,7 @@ To verify the webhook setup:
 - **Security**: HMAC verification, `TokenStorage`, and `SessionStorage` ensure secure, multi-user operation.
 - **UUID Integration**: Links data using the UUID from Chapter 3.
 - **Scalability**: Async processing supports high traffic.
-- **Temporary Storage**: Prepares for cloud storage in Chapter 6.
+- **Temporary Storage**: Uses `<shop_name>/shop_metadata.json` and `<shop_name>/shop_products.json`, preparing for cloud storage in Chapter 6.
 
 ### Next Steps:
 - Implement daily polling for redundancy (Subchapter 5.2).

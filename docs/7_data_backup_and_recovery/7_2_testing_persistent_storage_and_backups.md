@@ -2,213 +2,186 @@
 ## Subchapter 7.2: Testing Persistent Storage and Backups
 
 ### Introduction
-This subchapter verifies the SQLite-based persistent storage (`tokens.db`, `sessions.db`) from Chapter 3 and the daily backup system to DigitalOcean Spaces from Subchapter 7.1. We test the storage by ensuring tokens, UUIDs, and session data are correctly saved and retrieved during OAuth flows (Chapters 1–2), and we validate the backup and restore process for `tokens.db` and `sessions.db` using the `aws` CLI. This ensures the GPT Messenger sales bot’s critical data is reliably stored and recoverable, maintaining data integrity in a production environment on a DigitalOcean Droplet.
+This subchapter verifies the persistent storage and backup mechanisms for the GPT Messenger sales bot, focusing on the SQLite databases (`tokens.db` and `sessions.db` from Chapter 3) and their backups, which store OAuth tokens and session data. While the subchapter does not directly test DigitalOcean Spaces data, it relies on the data sync functionality from Chapter 6 to ensure the bot’s data (stored in `users/<uuid>/facebook/<page_id>/page_metadata.json`, `users/<uuid>/facebook/<page_id>/conversations/<sender_id>.json`, `users/<uuid>/shopify/<shop_name>/shop_metadata.json`, and `users/<uuid>/shopify/<shop_name>/shop_products.json`) is accessible after database restoration. Tests simulate database loss and recovery, confirming that webhook and polling mechanisms can still access and sync data using restored tokens and UUIDs.
 
 ### Prerequisites
-- Completed Chapters 1–6 and Subchapter 7.1.
-- FastAPI application running on a DigitalOcean Droplet or locally.
-- SQLite databases (`tokens.db`, `sessions.db`) in a configurable path (`TOKEN_DB_PATH`, `SESSION_DB_PATH`, or `./data/`) (Chapter 3).
-- Backup scripts (`backup_tokens_db.sh`, `backup_sessions_db.sh`) set up in `/app/scripts/` (Subchapter 7.1).
-- DigitalOcean Spaces bucket and credentials configured (Subchapter 6.3).
-- `aws` CLI installed on the Droplet (`sudo apt-get install awscli`).
-- Cron jobs scheduled for backups (Subchapter 7.1).
+- Completed Chapters 1–6.
+- FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment.
+- DigitalOcean Spaces credentials (`SPACES_KEY`, `SPACES_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`) set in `.env` (Subchapter 6.1).
+- Facebook and Shopify API credentials set in `.env` (Chapters 1–2, Subchapters 4.1, 5.1).
+- SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
+- Backup system for SQLite databases configured (Subchapter 7.1).
 
 ---
 
-### Step 1: Why Test Persistent Storage and Backups?
-Testing ensures:
-- `tokens.db` stores encrypted tokens and UUIDs for OAuth, webhooks, and polling (Chapters 1–5).
-- `sessions.db` stores encrypted session IDs for multi-platform linking (Chapter 3).
-- Backup scripts create date-stamped copies and upload to Spaces (`backups/tokens_YYYY-MM-DD.db`, `backups/sessions_YYYY-MM-DD.db`).
-- Restore processes recover databases without data loss.
+### Step 1: Understand the Testing Scope
+**Purpose**:
+- Verify that `tokens.db` and `sessions.db` can be restored from backups.
+- Ensure restored databases allow access to Spaces data (`users/<uuid>/facebook/...` and `users/<uuid>/shopify/...`).
+- Confirm webhook and polling mechanisms (Chapters 4–6) function post-recovery using restored tokens and UUIDs.
 
-### Step 2: Test Persistent Storage
-**Action**: Verify `tokens.db` and `sessions.db` functionality via OAuth flows.
+**Note**: This subchapter focuses on database backups, but the data sync tests rely on the Spaces paths established in Chapter 6:
+- Facebook: `users/<uuid>/facebook/<page_id>/page_metadata.json`, `users/<uuid>/facebook/<page_id>/conversations/<sender_id>.json`
+- Shopify: `users/<uuid>/shopify/<shop_name>/shop_metadata.json`, `users/<uuid>/shopify/<shop_name>/shop_products.json`
+
+**Why?**
+- Ensures the bot can recover from database loss without losing access to cloud-stored data.
+- Validates UUID-based organization in Spaces for multi-user support.
+- Confirms the renamed `facebook` directory and split Shopify files are accessible post-recovery.
+
+### Step 2: Testing Preparation
+**Action**: Simulate database loss and restore from backups, then test OAuth flows and data access.
 
 **Instructions**:
-1. Run the app:
+1. **Backup Databases** (from Subchapter 7.1):
+   - Ensure `tokens.db` and `sessions.db` are backed up (e.g., to `backups/tokens.db.bak` and `backups/sessions.db.bak`).
+2. **Simulate Database Loss**:
+   - Delete or rename `tokens.db` and `sessions.db`:
+     ```bash
+     mv data/tokens.db data/tokens.db.test
+     mv data/sessions.db data/sessions.db.test
+     ```
+3. **Restore Databases**:
+   - Copy backups to restore the databases:
+     ```bash
+     cp backups/tokens.db.bak data/tokens.db
+     cp backups/sessions.db.bak data/sessions.db
+     ```
+4. Run the app:
    ```bash
    python app.py
    ```
-2. Complete Shopify OAuth:
-   ```
-   http://localhost:5000/shopify/acme-7cu19ngr/login
-   ```
-3. Check the `/shopify/callback` response:
-   ```json
-   {
-     "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
-     "token_data": {
-       "access_token": "shpua_9a72896d590dbff5d3cf818f49710f67",
-       ...
-     },
-     ...
-     "webhook_test": {"status": "success"},
-     "polling_test": {"status": "success"}
-   }
-   ```
-4. Verify `tokens.db` contains the token and UUID:
-   ```bash
-   sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"
-   ```
-   **Expected Output**:
-   ```
-   SHOPIFY_ACCESS_TOKEN_acme-7cu19ngr_myshopify_com
-   USER_UUID_acme-7cu19ngr_myshopify_com
-   ```
-5. Verify `sessions.db` contains the session:
-   ```bash
-   sqlite3 "${SESSION_DB_PATH:-./data/sessions.db}" "SELECT session_id, created_at FROM sessions;"
-   ```
-   **Expected Output**:
-   ```
-   <session_id>|1698765432
-   ```
-6. Complete Facebook OAuth:
-   ```
-   http://localhost:5000/facebook/login
-   ```
-7. Check the `/facebook/callback` response:
-   ```json
-   {
-     "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
-     "pages": {...},
-     "webhook_test": {"status": "success"},
-     "polling_test": [{"page_id": "101368371725791", "result": {"status": "success"}}]
-   }
-   ```
-8. Verify `tokens.db` contains additional tokens and UUIDs:
-   ```bash
-   sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"
-   ```
-   **Expected Output**:
-   ```
-   SHOPIFY_ACCESS_TOKEN_acme-7cu19ngr_myshopify_com
-   USER_UUID_acme-7cu19ngr_myshopify_com
-   FACEBOOK_USER_ACCESS_TOKEN
-   FACEBOOK_ACCESS_TOKEN_101368371725791
-   PAGE_UUID_101368371725791
-   ```
+5. **Run OAuth Flows**:
+   - Shopify OAuth:
+     ```
+     http://localhost:5000/shopify/acme-7cu19ngr/login
+     ```
+   - Facebook OAuth:
+     ```
+     http://localhost:5000/facebook/login
+     ```
+6. **Trigger Webhooks**:
+   - For Facebook: Update a page’s `name` or send a test message via Messenger.
+   - For Shopify: Update a product in Shopify Admin (e.g., change “Premium Snowboard” to “Premium Snowboard Pro”).
+7. **Trigger Polling**:
+   - Temporarily modify `app.py` to run `facebook_daily_poll` and `shopify_daily_poll`:
+     ```python
+     from facebook_integration.utils import daily_poll as facebook_daily_poll
+     from shopify_integration.utils import daily_poll as shopify_daily_poll
+     facebook_daily_poll()
+     shopify_daily_poll()
+     ```
+   - Run: `python app.py`.
 
 **Why?**
-- Confirms `TokenStorage` and `SessionStorage` (Chapter 3) store encrypted data.
-- Ensures OAuth flows (Chapters 1–2) save tokens/UUIDs and sessions correctly.
-- Verifies multi-platform UUID linking.
-- **Note**: The database paths are configurable via `TOKEN_DB_PATH` and `SESSION_DB_PATH` environment variables, with fallbacks to `./data/tokens.db` and `./data/sessions.db`. Set these in `.env` for custom paths (e.g., `/var/app/data/` in production).
+- Simulates a recovery scenario to verify database restoration.
+- Tests data sync using restored tokens and UUIDs, ensuring access to Spaces data.
 
-### Step 3: Test Backup Scripts
-**Action**: Manually run backup scripts to verify database copying and Spaces uploads.
+### Step 3: Verify OAuth Flow Outputs
+**Action**: Check JSON responses and logs from OAuth flows to confirm token and UUID restoration.
+
+**Expected Output**:
+- Shopify OAuth response (same as Subchapter 5.3, with `user_uuid` matching pre-loss value).
+- Facebook OAuth response (same as Subchapter 4.4, with `user_uuid` matching pre-loss value).
+- Server logs:
+  ```
+  Webhook registered for acme-7cu19ngr.myshopify.com: products/update
+  Uploaded data to users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_metadata.json and users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_products.json for acme-7cu19ngr.myshopify.com
+  Webhook subscription for 'name,category,messages' already exists for page 101368371725791
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/page_metadata.json to Spaces
+  ```
+
+**Why?**
+- Confirms restored `tokens.db` and `sessions.db` provide correct tokens and UUIDs.
+- Verifies Spaces uploads use the correct paths (`users/<uuid>/facebook/...` and `users/<uuid>/shopify/...`).
+
+### Step 4: Verify Webhook Functionality
+**Action**: Check webhook processing post-recovery.
+
+**Expected Output**:
+- Facebook metadata webhook:
+  ```
+  Received webhook event for page 101368371725791: {'id': '101368371725791', 'changes': [{'field': 'name', 'value': 'New Store Name'}]}
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/page_metadata.json to Spaces
+  ```
+- Facebook message webhook:
+  ```
+  Received webhook event for page 101368371725791: {'id': '101368371725791', 'messaging': [...]}
+  New conversation started for sender 123456789 on page 101368371725791
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/conversations/123456789.json to Spaces
+  ```
+- Shopify webhook:
+  ```
+  Received products/update event from acme-7cu19ngr.myshopify.com: {'product': {'id': 12345, 'title': 'Premium Snowboard Pro'}}
+  Uploaded data to users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_metadata.json and users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_products.json for acme-7cu19ngr.myshopify.com
+  ```
+
+**Why?**
+- Confirms webhooks use restored tokens to upload data to Spaces.
+- Verifies the renamed `facebook` directory and split Shopify files.
+
+### Step 5: Verify Polling Functionality
+**Action**: Check polling post-recovery.
+
+**Expected Output**:
+- Facebook polling:
+  ```
+  Polled metadata for page 101368371725791: Success
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/page_metadata.json to Spaces
+  Polled conversations for page 101368371725791: Success
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/conversations/123456789.json to Spaces
+  ```
+- Shopify polling:
+  ```
+  Uploaded data to users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_metadata.json and users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_products.json for acme-7cu19ngr.myshopify.com
+  ```
+
+**Why?**
+- Confirms polling uses restored tokens to upload data to Spaces.
+- Ensures correct path structure and data formats.
+
+### Step 6: Verify Spaces Storage
+**Action**: Check Spaces for uploaded files post-recovery.
 
 **Instructions**:
-1. Run the backup scripts:
-   ```bash
-   /app/scripts/backup_tokens_db.sh
-   /app/scripts/backup_sessions_db.sh
-   ```
-2. Check logs in `/app/backups/backup_tokens.log` and `/app/backups/backup_sessions.log`:
-   **Expected Output**:
-   ```
-   Successfully uploaded tokens_2025-07-04.db to Spaces
-   Successfully uploaded sessions_2025-07-04.db to Spaces
-   ```
-3. Verify backup files in `/app/backups/`:
-   ```bash
-   ls /app/backups/
-   ```
-   **Expected Output**:
-   ```
-   sessions_2025-07-04.db  tokens_2025-07-04.db
-   ```
-4. Check the Spaces bucket (`gpt-messenger-data`) via the DigitalOcean control panel for:
-   - `backups/tokens_2025-07-04.db`
-   - `backups/sessions_2025-07-04.db`
+1. Log into DigitalOcean and navigate to the bucket specified in `SPACES_BUCKET`.
+2. Verify the presence and contents of:
+   - `users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/page_metadata.json`
+   - `users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/conversations/123456789.json`
+   - `users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_metadata.json`
+   - `users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_products.json`
+
+**Expected Content**:
+- Same as Subchapter 6.4, with metadata, conversations, and split Shopify data.
 
 **Why?**
-- Confirms scripts copy databases and upload to Spaces.
-- Ensures date-stamped versioning (`YYYY-MM-DD`).
-- **Note**: Ensure the backup scripts reference the correct database paths (`$TOKEN_DB_PATH` or `./data/tokens.db`, `$SESSION_DB_PATH` or `./data/sessions.db`).
+- Confirms data is accessible in Spaces after database restoration.
+- Verifies the updated path structure and file naming.
 
-### Step 4: Test Restore Process
-**Action**: Simulate database loss and restore from Spaces.
-
-**Instructions**:
-1. Stop the FastAPI app (`Ctrl+C`).
-2. Simulate loss by moving databases:
-   ```bash
-   mv "${TOKEN_DB_PATH:-./data/tokens.db}" "${TOKEN_DB_PATH:-./data/tokens.db}.bak"
-   mv "${SESSION_DB_PATH:-./data/sessions.db}" "${SESSION_DB_PATH:-./data/sessions.db}.bak"
-   ```
-3. Download backups from Spaces:
-   ```bash
-   aws --endpoint-url https://nyc3.digitaloceanspaces.com s3 cp s3://gpt-messenger-data/backups/tokens_2025-07-04.db "${TOKEN_DB_PATH:-./data/tokens.db}"
-   aws --endpoint-url https://nyc3.digitaloceanspaces.com s3 cp s3://gpt-messenger-data/backups/sessions_2025-07-04.db "${SESSION_DB_PATH:-./data/sessions.db}"
-   ```
-4. Set permissions:
-   ```bash
-   chmod 600 "${TOKEN_DB_PATH:-./data/tokens.db}" "${SESSION_DB_PATH:-./data/sessions.db}"
-   chown app_user:app_user "${TOKEN_DB_PATH:-./data/tokens.db}" "${SESSION_DB_PATH:-./data/sessions.db}"
-   ```
-5. Restart the app: `python app.py`.
-6. Re-run Shopify and Facebook OAuth flows (Steps 2–3 in Step 2).
-7. Verify the same `user_uuid` and tokens are retrieved, and webhook/polling tests succeed.
-
-**Why?**
-- Ensures backups are recoverable and functional.
-- Confirms data integrity after restoration.
-- **Note**: Use `TOKEN_DB_PATH` and `SESSION_DB_PATH` environment variables to specify database paths, with fallbacks to `./data/tokens.db` and `./data/sessions.db`. Adjust paths in backup scripts if customized.
-
-### Step 5: Verify Cron Scheduling
-**Action**: Check that cron jobs execute backups daily.
-
-**Instructions**:
-1. Verify crontab:
-   ```bash
-   crontab -l
-   ```
-   **Expected Output**:
-   ```
-   0 1 * * * /app/scripts/backup_tokens_db.sh >> /app/backups/backup_tokens.log 2>&1
-   0 1 * * * /app/scripts/backup_sessions_db.sh >> /app/backups/backup_sessions.log 2>&1
-   ```
-2. Wait until 1 AM UTC or simulate by running:
-   ```bash
-   run-parts /etc/cron.daily
-   ```
-3. Check `/app/backups/backup_tokens.log` and `/app/backups/backup_sessions.log` for new entries.
-4. Verify new backup files in the Spaces bucket.
-
-**Why?**
-- Confirms automated daily backups to Spaces.
-
-### Step 6: Troubleshoot Issues
-**Action**: Diagnose and fix issues if tests fail.
+### Step 7: Troubleshoot Issues
+**Action**: If tests fail, diagnose and fix issues.
 
 **Common Issues and Fixes**:
-1. **Storage Failure**:
-   - **Cause**: Tokens or sessions not saved.
-   - **Fix**: Verify `tokens.db` and `sessions.db` with `sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"` and `sqlite3 "${SESSION_DB_PATH:-./data/sessions.db}" "SELECT session_id, created_at FROM sessions;"`, check OAuth logs for errors (Chapters 1–2).
-2. **Backup Script Failure**:
-   - **Cause**: Missing environment variables or permissions.
-   - **Fix**: Ensure `/app/.env` includes `SPACES_API_KEY`, `SPACES_API_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT`, `TOKEN_DB_PATH`, `SESSION_DB_PATH`; check permissions (`ls -l "${TOKEN_DB_PATH:-./data/tokens.db}" "${SESSION_DB_PATH:-./data/sessions.db}"`); review logs in `/app/backups/`.
-3. **Spaces Upload Failure**:
-   - **Cause**: Invalid credentials or bucket settings.
-   - **Fix**: Verify `SPACES_API_KEY`, `SPACES_API_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT` in `.env`.
-4. **Restore Failure**:
-   - **Cause**: Corrupted backup or incorrect permissions.
-   - **Fix**: Download and inspect backups, ensure `chmod 600` and `chown app_user:app_user` for restored files.
-5. **Cron Failure**:
-   - **Cause**: Cron not running or script errors.
-   - **Fix**: Check `crontab -l`, verify script permissions (`chmod +x`), and review cron logs (`/var/log/syslog`).
+1. **OAuth Failure**:
+   - **Cause**: Restored database missing tokens or UUIDs.
+   - **Fix**: Verify backup integrity using `sqlite3 backups/tokens.db.bak "SELECT key FROM tokens;"`. Re-run OAuth flows if necessary.
+2. **Webhook or Polling Failure**:
+   - **Cause**: Invalid tokens or Spaces misconfiguration.
+   - **Fix**: Check logs for API or `boto3` errors. Verify `SPACES_KEY`, `SPACES_SECRET`, and `SPACES_BUCKET`.
+3. **Missing Spaces Files**:
+   - **Cause**: Uploads failed.
+   - **Fix**: Check logs for `boto3` errors. Ensure bucket permissions allow write access.
 
 **Why?**
-- Uses logs and database queries to debug storage and backup issues.
+- Ensures robust recovery and data access.
+- Validates Spaces paths and data integrity.
 
 ### Summary: Why This Subchapter Matters
-- **Data Integrity**: Verifies `tokens.db` and `sessions.db` store critical data.
-- **Backup Reliability**: Confirms daily backups to Spaces.
-- **Recovery**: Ensures data can be restored without loss.
-- **Production Readiness**: Supports scalable, secure operation.
+- **Recovery Verification**: Confirms database restoration allows continued data sync to Spaces.
+- **Path Consistency**: Ensures `users/<uuid>/facebook/...` and `users/<uuid>/shopify/...` paths work post-recovery, with renamed `facebook` directory and split Shopify files.
+- **Bot Reliability**: Guarantees the bot can access cloud data after a failure.
+- **Security**: Maintains secure token storage and private ACL.
 
 ### Next Steps:
-- Monitor backup logs and Spaces for ongoing reliability.
-- Implement additional bot features as needed.
+- Deploy the bot for advanced functionality (Chapter 8).
+- Monitor logs for ongoing backup and sync success.

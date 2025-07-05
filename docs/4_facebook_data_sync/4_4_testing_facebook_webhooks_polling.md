@@ -2,7 +2,7 @@
 ## Subchapter 4.4: Testing Facebook Webhooks and Polling
 
 ### Introduction
-With Facebook webhooks and polling set up in Subchapters 4.1–4.3, this subchapter verifies their functionality through integrated tests within the OAuth flow. After successful authentication, the FastAPI application tests the webhook endpoint and polling mechanism for each authenticated page, covering both metadata (`name`, `category`) and message events, using the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user. Data is stored in temporary files (`facebook/<page_id>/page_data.json` for metadata and `facebook/<page_id>/conversations/<sender_id>.json` for conversation payloads), and tests confirm new vs. continuing conversation handling. The tests return consistent JSON results to ensure the GPT Messenger sales bot reliably processes and stores non-sensitive data using `TokenStorage` and `SessionStorage`.
+With Facebook webhooks and polling set up in Subchapters 4.1–4.3, this subchapter verifies their functionality through integrated tests within the OAuth flow. After successful authentication, the FastAPI application tests the webhook endpoint and polling mechanism for each authenticated page, covering both metadata (`name`, `category`) and message events, using the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user. Data is stored in temporary files (`facebook/<page_id>/page_metadata.json` for metadata and `facebook/<page_id>/conversations/<sender_id>.json` for conversation payloads), and tests confirm new vs. continuing conversation handling. The tests return consistent JSON results to ensure the GPT Messenger sales bot reliably processes and stores non-sensitive data using `TokenStorage` and `SessionStorage`. The `facebook` directory reflects both metadata and messaging, aligning with the final structure in Chapter 6 (`users/<uuid>/facebook/<page_id>/...`).
 
 ### Prerequisites
 - Completed Chapters 1–3 (Facebook OAuth, Shopify OAuth, Persistent Storage and User Identification) and Subchapters 4.1–4.3.
@@ -115,7 +115,7 @@ The tests for webhooks and polling are executed during the OAuth callback, using
   INFO:     127.0.0.1:0 - "GET /facebook/login HTTP/1.1" 307 Temporary Redirect
   Webhook subscription for 'name,category,messages' already exists for page 101368371725791
   Received webhook event for page 101368371725791: {'id': '101368371725791', 'changes': [{'field': 'name', 'value': 'Test Page'}]}
-  Wrote metadata to facebook/101368371725791/page_data.json for page 101368371725791
+  Wrote metadata to facebook/101368371725791/page_metadata.json for page 101368371725791
   Metadata webhook test result for page 101368371725791: {'status': 'success'}
   Received webhook event for page 101368371725791: {'id': '101368371725791', 'messaging': [...]}
   New conversation started for sender test_user_id on page 101368371725791
@@ -139,7 +139,7 @@ The tests for webhooks and polling are executed during the OAuth callback, using
 **Why?**
 - Confirms webhook and polling functionality for both metadata and messages using `TokenStorage` and `SessionStorage`.
 - Verifies new conversation handling in the message webhook test.
-- Ensures non-sensitive data storage for the sales bot.
+- Ensures non-sensitive data storage in `facebook/<page_id>/page_metadata.json` and `facebook/<page_id>/conversations/<sender_id>.json` for the sales bot, preparing for Spaces (`users/<uuid>/facebook/<page_id>/...`) in Chapter 6.
 
 ### Step 2: Verify Webhook Functionality
 **Action**: Simulate metadata and message events to test the webhook endpoint.
@@ -157,7 +157,7 @@ The tests for webhooks and polling are executed during the OAuth callback, using
 - Metadata webhook logs:
   ```
   Received webhook event for page 101368371725791: {'id': '101368371725791', 'changes': [{'field': 'name', 'value': 'New Store Name'}]}
-  Wrote metadata to facebook/101368371725791/page_data.json for page 101368371725791
+  Wrote metadata to facebook/101368371725791/page_metadata.json for page 101368371725791
   ```
 - Message webhook logs (first message):
   ```
@@ -175,7 +175,7 @@ The tests for webhooks and polling are executed during the OAuth callback, using
 **Why?**
 - Verifies the `/facebook/webhook` endpoint (Subchapters 4.1–4.2) processes `name,category` and `messages` events using `TokenStorage`.
 - Confirms new vs. continuing conversation handling via file existence checks.
-- Ensures data is stored in temporary files.
+- Ensures data is stored in temporary files (`facebook/<page_id>/page_metadata.json` and `facebook/<page_id>/conversations/<sender_id>.json`).
 
 ### Step 3: Verify Polling Functionality
 **Action**: Manually trigger the daily polling function to test metadata and conversation polling.
@@ -193,7 +193,7 @@ The tests for webhooks and polling are executed during the OAuth callback, using
 - Logs show:
   ```
   Polled metadata for page 101368371725791: Success
-  Wrote metadata to facebook/101368371725791/page_data.json for page 101368371725791
+  Wrote metadata to facebook/101368371725791/page_metadata.json for page 101368371725791
   Polled conversations for page 101368371725791: Success
   New conversation polled for sender 123456789 on page 101368371725791
   Wrote conversation payloads to facebook/101368371725791/conversations/123456789.json for sender 123456789 on page 101368371725791 (new: True)
@@ -202,19 +202,19 @@ The tests for webhooks and polling are executed during the OAuth callback, using
 **Why?**
 - Confirms `poll_facebook_data` and `poll_facebook_conversations` (Subchapter 4.3) retrieve data using `TokenStorage`.
 - Verifies new vs. continuing conversation handling in polling.
-- Ensures the daily poll works with temporary file storage.
+- Ensures the daily poll works with temporary file storage (`facebook/<page_id>/...`).
 
 ### Step 4: Verify Temporary File Storage
 **Action**: Check the temporary file storage for metadata and conversation data.
 
 **Instructions**:
 1. Verify files exist in the project directory:
-   - Metadata: `facebook/101368371725791/page_data.json`
+   - Metadata: `facebook/101368371725791/page_metadata.json`
    - Conversations: `facebook/101368371725791/conversations/123456789.json`
 2. Open the files and confirm their contents.
 
 **Expected Content**:
-- Metadata (`facebook/101368371725791/page_data.json`):
+- Metadata (`facebook/101368371725791/page_metadata.json`):
   ```json
   {
     "data": [
@@ -247,8 +247,8 @@ The tests for webhooks and polling are executed during the OAuth callback, using
   ```
 
 **Why?**
-- Confirms data is stored correctly in temporary files, consistent with Subchapters 4.1–4.3.
-- Verifies conversation payloads are arrays of raw `messaging` events, with new messages appended correctly.
+- Confirms data is stored correctly in temporary files (`facebook/<page_id>/page_metadata.json` and `facebook/<page_id>/conversations/<sender_id>.json`), consistent with Subchapters 4.1–4.3.
+- Verifies conversation payloads are arrays of raw `messaging` events, with new messages appended correctly, preparing for Spaces in Chapter 6.
 
 ### Step 5: Troubleshoot Issues
 **Action**: If the JSON response or logs show failures, diagnose and fix issues.
@@ -284,14 +284,14 @@ The tests for webhooks and polling are executed during the OAuth callback, using
 
 **Why?**
 - Uses JSON responses and logs to debug webhook, polling, or session issues.
-- Ensures new vs. continuing conversation handling is verified.
+- Ensures new vs. continuing conversation handling is verified in `facebook/<page_id>/conversations/<sender_id>.json`.
 
 ### Summary: Why This Subchapter Matters
 - **Functionality Verification**: Tests confirm webhook and polling systems work for metadata and messages, using `TokenStorage` and `SessionStorage`.
 - **Conversation Tracking**: Verifies new vs. continuing conversation handling via file existence checks.
 - **Security**: Excludes sensitive tokens, validates sessions, and uses encrypted storage.
-- **Comprehensive Data**: Stores non-sensitive metadata and full conversation payloads for the sales bot.
-- **Bot Readiness**: Ensures up-to-date data for customer interactions.
+- **Comprehensive Data**: Stores non-sensitive metadata (`page_metadata.json`) and full conversation payloads for the sales bot.
+- **Bot Readiness**: Ensures up-to-date data for customer interactions, preparing for Spaces (`users/<uuid>/facebook/<page_id>/...`) in Chapter 6.
 
 ### Next Steps:
 - Proceed to Chapter 5 for Shopify data synchronization.

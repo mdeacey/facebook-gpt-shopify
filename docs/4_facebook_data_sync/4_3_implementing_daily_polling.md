@@ -2,7 +2,7 @@
 ## Subchapter 4.3: Implementing Daily Polling
 
 ### Introduction
-While webhooks (Subchapters 4.1 and 4.2) provide real-time updates for Facebook page metadata (e.g., `name`, `category`) and messages, they can miss events due to network issues or downtime. This subchapter implements a daily polling mechanism to fetch both page metadata and conversation history periodically, ensuring the GPT Messenger sales bot’s data remains up-to-date. Polling uses the SQLite-based `TokenStorage` (Chapter 3) for token and UUID retrieval and stores data in temporary files (`facebook/<page_id>/page_data.json` for metadata and `facebook/<page_id>/conversations/<sender_id>.json` for conversation payloads). We integrate polling into the OAuth flow for testing and schedule it daily using APScheduler, maintaining non-sensitive metadata and full conversation payloads consistent with Subchapters 4.1 and 4.2. Testing is covered in Subchapter 4.4.
+While webhooks (Subchapters 4.1 and 4.2) provide real-time updates for Facebook page metadata (e.g., `name`, `category`) and messages, they can miss events due to network issues or downtime. This subchapter implements a daily polling mechanism to fetch both page metadata and conversation history periodically, ensuring the GPT Messenger sales bot’s data remains up-to-date. Polling uses the SQLite-based `TokenStorage` (Chapter 3) for token and UUID retrieval and stores data in temporary files (`facebook/<page_id>/page_metadata.json` for metadata and `facebook/<page_id>/conversations/<sender_id>.json` for conversation payloads). We integrate polling into the OAuth flow for testing and schedule it daily using APScheduler, maintaining non-sensitive metadata and full conversation payloads consistent with Subchapters 4.1 and 4.2. The `facebook` directory reflects both metadata and messaging, aligning with the final structure in Chapter 6 (`users/<uuid>/facebook/<page_id>/...`). Testing is covered in Subchapter 4.4.
 
 ### Prerequisites
 - Completed Chapters 1–3 (Facebook OAuth, Shopify OAuth, Persistent Storage and User Identification) and Subchapters 4.1–4.2.
@@ -52,7 +52,8 @@ The project structure remains as defined in Subchapters 4.1 and 4.2:
 - `facebook_integration/utils.py` handles polling logic using `TokenStorage`.
 - `app.py` integrates APScheduler for scheduling.
 - `shared/sessions.py` and `shared/tokens.py` support persistent storage (Chapter 3).
-- No dependencies from future chapters (e.g., `digitalocean_integration/` or `boto3`) are included.
+- No dependencies from future chapters (e.g., `digitalocean_integration` or `boto3`) are included.
+- The `facebook` directory is used for temporary storage, reflecting both metadata (`page_metadata.json`) and conversations (`conversations/<sender_id>.json`), aligning with `users/<uuid>/facebook/<page_id>/...` in Chapter 6.
 
 ### Step 3: Update `app.py`
 Add APScheduler to schedule daily polling for both metadata and conversations, using environment validation.
@@ -131,19 +132,7 @@ import httpx
 import hmac
 import hashlib
 import json
-from fastapi import HTTPException, Request
-from shared.tokens import TokenStorage
-
-token_storage = TokenStorage()
-
-async def exchange_code_for_token(code: str):
-    url = "https://graph.facebook.com/v19.0/oauth/access concede
-```python
-import os
-import httpx
-import hmac
-import hashlib
-import json
+from datetime import datetime
 from fastapi import HTTPException, Request
 from shared.tokens import TokenStorage
 
@@ -213,7 +202,7 @@ async def get_existing_subscriptions(page_id: str, access_token: str):
         response = await client.get(url, headers=headers)
         return response.json().get("data", [])
 
-async def poll_facebook_data(access_token: str, page_id: str) -> dict:
+async def poll_facebook_data(page_id: str) -> dict:
     try:
         user_access_token = token_storage.get_token("FACEBOOK_USER_ACCESS_TOKEN")
         if not user_access_token:
@@ -223,9 +212,9 @@ async def poll_facebook_data(access_token: str, page_id: str) -> dict:
             raise HTTPException(status_code=500, detail=f"User UUID not found for page {page_id}")
         page_data = await get_facebook_data(user_access_token)
         os.makedirs(f"facebook/{page_id}", exist_ok=True)
-        with open(f"facebook/{page_id}/page_data.json", "w") as f:
+        with open(f"facebook/{page_id}/page_metadata.json", "w") as f:
             json.dump(page_data, f)
-        print(f"Wrote metadata to facebook/{page_id}/page_data.json for page {page_id}")
+        print(f"Wrote metadata to facebook/{page_id}/page_metadata.json for page {page_id}")
         return {"status": "success"}
     except Exception as e:
         print(f"Failed to poll metadata for page {page_id}: {str(e)}")
@@ -291,7 +280,7 @@ async def daily_poll():
         try:
             access_token = token_storage.get_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}")
             if access_token:
-                result = await poll_facebook_data(access_token, page_id)
+                result = await poll_facebook_data(page_id)
                 if result["status"] == "success":
                     print(f"Polled metadata for page {page_id}: Success")
                 else:
@@ -306,10 +295,10 @@ async def daily_poll():
 ```
 
 **Why?**
-- **Polling Functions**: `poll_facebook_data` fetches metadata, storing in `facebook/<page_id>/page_data.json`. `poll_facebook_conversations` fetches conversation history, storing full payloads in `facebook/<page_id>/conversations/<sender_id>.json`, consistent with Subchapter 4.2.
+- **Polling Functions**: `poll_facebook_data` fetches metadata, storing in `facebook/<page_id>/page_metadata.json`. `poll_facebook_conversations` fetches conversation history, storing full payloads in `facebook/<page_id>/conversations/<sender_id>.json`, consistent with Subchapter 4.2.
 - **Conversation Tracking**: Checks file existence to identify new vs. continuing conversations, appending unique payloads based on `message.mid`.
 - **Daily Poll**: Schedules both metadata and conversation polling daily, using `TokenStorage` for tokens/UUIDs.
-- **Temporary Storage**: Uses file-based storage, avoiding Chapter 6 dependencies.
+- **Temporary Storage**: Uses `facebook/<page_id>/...`, preparing for Spaces (`users/<uuid>/facebook/<page_id>/...`) in Chapter 6.
 - **Error Handling**: Returns status and error messages for debugging.
 
 ### Step 5: Update `facebook_integration/routes.py`
@@ -401,9 +390,9 @@ async def oauth_callback(request: Request):
 
         # Temporary file storage for metadata
         os.makedirs(f"facebook/{page_id}", exist_ok=True)
-        with open(f"facebook/{page_id}/page_data.json", "w") as f:
+        with open(f"facebook/{page_id}/page_metadata.json", "w") as f:
             json.dump(pages, f)
-        print(f"Wrote metadata to facebook/{page_id}/page_data.json for page {page_id}")
+        print(f"Wrote metadata to facebook/{page_id}/page_metadata.json for page {page_id}")
 
         # Test metadata webhook
         test_metadata_payload = {
@@ -455,7 +444,7 @@ async def oauth_callback(request: Request):
             print(f"Message webhook test result for page {page_id}: {webhook_test_result}")
 
         # Test polling
-        metadata_result = await poll_facebook_data(page["access_token"], page_id)
+        metadata_result = await poll_facebook_data(page_id)
         polling_test_results.append({"page_id": page_id, "type": "metadata", "result": metadata_result})
         print(f"Metadata polling test result for page {page_id}: {metadata_result}")
         conv_result = await poll_facebook_conversations(page["access_token"], page_id)
@@ -534,9 +523,9 @@ async def facebook_webhook(request: Request):
             try:
                 page_data = await get_facebook_data(access_token)
                 os.makedirs(f"facebook/{page_id}", exist_ok=True)
-                with open(f"facebook/{page_id}/page_data.json", "w") as f:
+                with open(f"facebook/{page_id}/page_metadata.json", "w") as f:
                     json.dump(page_data, f)
-                print(f"Wrote metadata to facebook/{page_id}/page_data.json for page {page_id}")
+                print(f"Wrote metadata to facebook/{page_id}/page_metadata.json for page {page_id}")
             except Exception as e:
                 print(f"Failed to write metadata for page {page_id}: {str(e)}")
 
@@ -558,7 +547,7 @@ async def verify_webhook_subscription(request: Request):
 - **Callback Endpoint**: Tests both metadata and conversation polling, storing results in `polling_test_results`, alongside webhook tests from Subchapter 4.2.
 - **Webhook Endpoint**: Unchanged from Subchapter 4.2, included for completeness.
 - **Security**: Excludes tokens, uses HMAC verification, and clears sessions.
-- **Temporary Storage**: Uses file-based storage for both metadata and conversations.
+- **Temporary Storage**: Uses `facebook/<page_id>/page_metadata.json` and `facebook/<page_id>/conversations/<sender_id>.json`, preparing for Spaces in Chapter 6 (`users/<uuid>/facebook/<page_id>/...`).
 - **Polling Tests**: Verifies both data types during OAuth, preparing for Subchapter 4.4.
 
 ### Step 6: Update `requirements.txt`
@@ -592,7 +581,7 @@ facebook/
 
 **Why?**
 - Excludes `tokens.db`, `sessions.db`, and temporary files (`facebook/<page_id>/...`) to prevent committing sensitive data.
-- Covers metadata and conversation files.
+- Covers metadata (`page_metadata.json`) and conversation files (`conversations/<sender_id>.json`) in the `facebook` directory.
 
 ### Step 8: Testing Preparation
 To verify polling:
@@ -606,7 +595,7 @@ To verify polling:
 **Expected Output** (example logs during OAuth):
 ```
 Webhook subscription for 'name,category,messages' already exists for page 101368371725791
-Wrote metadata to facebook/101368371725791/page_data.json for page 101368371725791
+Wrote metadata to facebook/101368371725791/page_metadata.json for page 101368371725791
 Metadata webhook test result for page 101368371725791: {'status': 'success'}
 Message webhook test result for page 101368371725791: {'status': 'success'}
 Metadata polling test result for page 101368371725791: {'status': 'success'}
@@ -617,7 +606,7 @@ Conversation polling test result for page 101368371725791: {'status': 'success'}
 - **Data Redundancy**: Polling ensures metadata and conversation data are complete, complementing webhooks.
 - **UUID Integration**: Uses `TokenStorage` for multi-platform linking.
 - **Scalability**: Async polling and scheduling support production environments.
-- **Temporary Storage**: Prepares for future cloud storage enhancements.
+- **Temporary Storage**: Uses `facebook/<page_id>/...`, preparing for cloud storage enhancements in Chapter 6 (`users/<uuid>/facebook/<page_id>/...`).
 - **Conversation Tracking**: Maintains consistency with webhook payload storage, tracking new vs. continuing conversations.
 
 ### Next Steps:

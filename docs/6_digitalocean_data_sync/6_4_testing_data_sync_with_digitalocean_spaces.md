@@ -2,21 +2,21 @@
 ## Subchapter 6.4: Testing Data Sync with DigitalOcean Spaces
 
 ### Introduction
-With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapters 6.1–6.2) and the bucket configured (Subchapter 6.3), this subchapter verifies that webhook and polling mechanisms correctly upload non-sensitive data to Spaces. For Facebook, we test uploads of page metadata (`users/<uuid>/facebook_messenger/<page_id>/page_data.json`) and conversation histories (`users/<uuid>/facebook_messenger/<page_id>/conversations/<sender_id>.json`). For Shopify, we test uploads of shop and product data (`users/<uuid>/shopify/<shop_name>/shopify_data.json`). Tests use the UUID from `TokenStorage` (Chapter 3) and verify new vs. continuing conversation handling, ensuring the GPT Messenger sales bot’s data is stored securely and scalably.
+With Facebook and Shopify data now stored in DigitalOcean Spaces (Subchapters 6.1–6.2), this subchapter verifies the webhook and polling mechanisms for both platforms, ensuring data is correctly uploaded to Spaces in the structure `users/<uuid>/facebook/<page_id>/page_metadata.json`, `users/<uuid>/facebook/<page_id>/conversations/<sender_id>.json`, `users/<uuid>/shopify/<shop_name>/shop_metadata.json`, and `users/<uuid>/shopify/<shop_name>/shop_products.json`. Tests are integrated into the OAuth flows, using the SQLite-based `TokenStorage` and `SessionStorage` (Chapter 3) to retrieve UUIDs and tokens. The tests confirm non-sensitive data storage, new vs. continuing conversation handling for Facebook, and split Shopify data storage, ensuring the GPT Messenger sales bot has reliable, cloud-based data for customer interactions.
 
 ### Prerequisites
-- Completed Chapters 1–5 and Subchapters 6.1–6.3.
-- FastAPI application running on a DigitalOcean Droplet or locally (e.g., `http://localhost:5000`).
-- SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
-- DigitalOcean Spaces bucket (`gpt-messenger-data`) and credentials configured (Subchapter 6.3).
-- Environment variables for Spaces, OAuth, and webhooks set in `.env` (Chapters 1–4, Subchapter 6.3).
+- Completed Chapters 1–5 and Subchapters 6.1–6.2.
+- FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment.
+- DigitalOcean Spaces credentials (`SPACES_KEY`, `SPACES_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`) set in `.env` (Subchapter 6.1).
+- Facebook API credentials (`FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `FACEBOOK_REDIRECT_URI`, `FACEBOOK_WEBHOOK_ADDRESS`, `FACEBOOK_VERIFY_TOKEN`) and Shopify API credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`, `SHOPIFY_WEBHOOK_ADDRESS`) set in `.env`.
 - `session_id` cookie set by Shopify OAuth (Chapter 3).
-- `boto3` installed (`pip install boto3`) for Spaces integration.
+- SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
+- Permissions configured for Facebook (`pages_messaging`, `pages_show_list`, `pages_manage_metadata`) and Shopify (`read_product_listings`, `read_inventory`, `read_discounts`, `read_locations`, `read_products`).
 
 ---
 
-### Step 1: Test Facebook Data Sync via OAuth Flow
-**Action**: Run the Facebook OAuth flow to test webhook and polling uploads to Spaces for metadata and conversations.
+### Step 1: Test Facebook OAuth Flow
+**Action**: Run the Facebook OAuth flow to test webhook and polling uploads to Spaces.
 
 **Instructions**:
 1. Run the app:
@@ -31,211 +31,103 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
    ```
    http://localhost:5000/facebook/login
    ```
-   or, for GitHub Codespaces:
-   ```
-   https://your-codespace-id-5000.app.github.dev/facebook/login
-   ```
-4. Log in to your Facebook account and authorize the `messenger-gpt-shopify` app, granting `pages_messaging`, `pages_show_list`, and `pages_manage_metadata` permissions.
+4. Log in to your Facebook account and authorize the app.
 
 **Expected Output**:
-- Browser redirects to `/facebook/callback` and displays (abridged):
-  ```json
-  {
-    "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
-    "pages": {
-      "data": [
-        {
-          "id": "101368371725791",
-          "name": "Fast Online Store PH",
-          "category": "Footwear store",
-          "category_list": [
-            {
-              "id": "109512302457693",
-              "name": "Footwear store"
-            }
-          ],
-          "about": "Your one-stop shop for premium footwear in the Philippines!",
-          "website": "https://www.faststoreph.com",
-          "link": "https://www.facebook.com/FastOnlineStorePH",
-          "picture": {
-            "data": {
-              "url": "https://scontent.xx.fbcdn.net/v/.../profile.jpg"
-            }
-          },
-          "fan_count": 1500,
-          "verification_status": "verified",
-          "location": {
-            "city": "Manila",
-            "country": "Philippines"
-          },
-          "phone": "+63 2 1234 5678",
-          "email": "contact@faststoreph.com",
-          "created_time": "2020-05-15T10:00:00+0000"
-        }
-      ],
-      "paging": {
-        "cursors": {
-          "before": "QVFIUnp5enFBc21kckE2d1pud2g3Mjd1bEFSOUs4ZAEdSSEpIdHZAoSjVPdlgzVHN6aTZAReEpyOWdHMEF3MmJoRmpXNWI3dlFpa3BWLWoza2hMMDd4TzhMSUF3",
-          "after": "QVFIUnp5enFBc21kckE2d1pud2g3Mjd1bEFSOUs4ZAEdSSEpIdHZAoSjVPdlgzVHN6aTZAReEpyOWdHMEF3MmJoRmpXNWI3dlFpa3BWLWoza2hMMDd4TzhMSUF3"
-        }
-      }
-    },
-    "webhook_test": [
-      {
-        "page_id": "101368371725791",
-        "type": "metadata",
-        "result": {"status": "success"}
-      },
-      {
-        "page_id": "101368371725791",
-        "type": "messages",
-        "result": {"status": "success"}
-      }
-    ],
-    "polling_test": [
-      {
-        "page_id": "101368371725791",
-        "type": "metadata",
-        "result": {"status": "success"}
-      },
-      {
-        "page_id": "101368371725791",
-        "type": "conversations",
-        "result": {"status": "success"}
-      }
-    ],
-    "upload_status": [
-      {
-        "page_id": "101368371725791",
-        "result": {"status": "success"}
-      }
-    ]
-  }
-  ```
+- The browser displays a JSON response (same as Subchapter 4.4, with `webhook_test` and `polling_test` results).
 - Server logs show:
   ```
-  INFO:     127.0.0.1:0 - "GET /facebook/login HTTP/1.1" 307 Temporary Redirect
   Webhook subscription for 'name,category,messages' already exists for page 101368371725791
-  Uploaded metadata to Spaces for page 101368371725791
-  Received webhook event for page 101368371725791: {'id': '101368371725791', 'changes': [{'field': 'name', 'value': 'Test Page'}]}
-  Uploaded metadata to Spaces for page 101368371725791
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/page_metadata.json to Spaces
   Metadata webhook test result for page 101368371725791: {'status': 'success'}
-  Received webhook event for page 101368371725791: {'id': '101368371725791', 'messaging': [...]}
   New conversation started for sender test_user_id on page 101368371725791
-  Uploaded conversation payload to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/conversations/test_user_id.json (new: True)
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/conversations/test_user_id.json to Spaces
   Message webhook test result for page 101368371725791: {'status': 'success'}
-  Polled metadata for page 101368371725791: Success
   Metadata polling test result for page 101368371725791: {'status': 'success'}
-  Polled conversations for page 101368371725791: Success
   Conversation polling test result for page 101368371725791: {'status': 'success'}
-  Upload status verified for page 101368371725791: Success
-  INFO:     127.0.0.1:0 - "GET /facebook/callback?code=...&state=... HTTP/1.1" 200 OK
   ```
 
-**Why?**
-- Confirms webhook and polling upload metadata and conversation payloads to Spaces using `TokenStorage`.
-- Verifies new conversation handling for the message webhook test.
-- Ensures `upload_status` confirms successful uploads.
+**What to Look For**:
+- **Webhook Success**: `webhook_test` shows `{"status": "success"}` for `metadata` and `messages`.
+- **Polling Success**: `polling_test` shows `{"status": "success"}` for `metadata` and `conversations`.
+- **Conversation Tracking**: Logs indicate “New conversation started” for the test message.
+- **Spaces Uploads**: Logs confirm uploads to `users/<uuid>/facebook/<page_id>/page_metadata.json` and `users/<uuid>/facebook/<page_id>/conversations/<sender_id>.json`.
 
-### Step 2: Test Shopify Data Sync via OAuth Flow
-**Action**: Run the Shopify OAuth flow to test webhook and polling uploads.
+**Why?**
+- Verifies webhook and polling uploads to Spaces for Facebook data, using the renamed `facebook` directory and `page_metadata.json`.
+
+### Step 2: Test Shopify OAuth Flow
+**Action**: Run the Shopify OAuth flow to test webhook and polling uploads to Spaces.
 
 **Instructions**:
-1. Run the app: `python app.py`.
+1. Run the app (if not already running).
 2. Initiate Shopify OAuth:
    ```
    http://localhost:5000/shopify/acme-7cu19ngr/login
    ```
-   or, for GitHub Codespaces:
-   ```
-   https://your-codespace-id-5000.app.github.dev/shopify/acme-7cu19ngr/login
-   ```
-3. Log in to your Shopify account and authorize the app, granting `read_product_listings`, `read_inventory`, `read_discounts`, `read_locations`, `read_products` permissions.
+3. Log in to your Shopify store and authorize the app.
 
 **Expected Output**:
-- Browser redirects to `/shopify/callback` and displays (abridged):
-  ```json
-  {
-    "user_uuid": "550e8400-e29b-41d4-a716-446655440000",
-    "token_data": {
-      "access_token": "shpua_9a72896d590dbff5d3cf818f49710f67",
-      "scope": "read_product_listings,read_inventory,read_discounts,read_locations,read_products"
-    },
-    "shopify_data": {
-      "data": {
-        "shop": {
-          "name": "acme-7cu19ngr",
-          "primaryDomain": {"url": "https://acme-7cu19ngr.myshopify.com"}
-        },
-        "products": {
-          "edges": [
-            {
-              "node": {
-                "title": "The Complete Snowboard",
-                "description": "This PREMIUM snowboard is so SUPERDUPER awesome!",
-                ...
-              }
-            }
-          ]
-        }
-      }
-    },
-    "webhook_test": {"status": "success"},
-    "polling_test": {"status": "success"}
-  }
-  ```
+- The browser displays a JSON response (same as Subchapter 5.3, with `webhook_test` and `polling_test` results).
 - Server logs show:
   ```
   Webhook registered for acme-7cu19ngr.myshopify.com: products/update
-  Received products/update event from acme-7cu19ngr.myshopify.com: {'product': {'id': 12345, 'title': 'Test Product'}}
-  Uploaded data to Spaces: users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shopify_data.json
+  Uploaded data to users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_metadata.json and users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_products.json for acme-7cu19ngr.myshopify.com
   Webhook test result for acme-7cu19ngr.myshopify.com: {'status': 'success'}
-  Polling test result for acme-7cu19ngr.myshopify.com: {'status': 'success'}
+  Polling test result for acme-7cu19ngr.myshopify.com: Success
   ```
+
+**What to Look For**:
+- **Webhook Success**: `webhook_test: {"status": "success"}` confirms the webhook endpoint works.
+- **Polling Success**: `polling_test: {"status": "success"}` confirms polling functionality.
+- **Spaces Uploads**: Logs confirm uploads to `users/<uuid>/shopify/<shop_name>/shop_metadata.json` and `users/<uuid>/shopify/<shop_name>/shop_products.json`.
 
 **Why?**
-- Confirms webhook and polling upload Shopify data to Spaces using `TokenStorage`.
-- Unaffected by recent changes to Facebook data handling.
+- Verifies webhook and polling uploads to Spaces for Shopify data, using the split file structure.
 
 ### Step 3: Verify Webhook Functionality
-**Action**: Simulate updates to trigger webhooks.
+**Action**: Simulate webhook events for both platforms to test Spaces uploads.
 
 **Instructions**:
-1. **Facebook Metadata**: Update a page’s name or category in the Facebook interface (e.g., change “Fast Online Store PH” to “New Store Name”).
-2. **Facebook Messages**: Send a test message to the connected page via Messenger (e.g., “Hello, I’m interested in snowboards”), followed by a second message (e.g., “Can you send the price list?”) to test continuing conversation handling.
-3. **Shopify**: Update a product’s title or inventory in the Shopify Admin (e.g., change “The Complete Snowboard” title).
-4. Check server logs for webhook event processing.
+1. **Facebook Webhooks**:
+   - Update the `name` or `category` of a connected page in the Facebook interface.
+   - Send a test message to the page via Messenger (e.g., “Hello, I’m interested in snowboards”).
+   - Send a second message from the same user to test continuing conversation handling.
+2. **Shopify Webhooks**:
+   - Update a product in Shopify Admin (e.g., change “Premium Snowboard” to “Premium Snowboard Pro”).
+3. Check server logs for webhook processing and Spaces uploads.
 
 **Expected Output**:
-- Facebook metadata logs:
+- Facebook metadata webhook:
   ```
   Received webhook event for page 101368371725791: {'id': '101368371725791', 'changes': [{'field': 'name', 'value': 'New Store Name'}]}
-  Uploaded metadata to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/page_data.json
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/page_metadata.json to Spaces
   ```
-- Facebook message logs (first message):
+- Facebook message webhook (first message):
   ```
   Received webhook event for page 101368371725791: {'id': '101368371725791', 'messaging': [...]}
   New conversation started for sender 123456789 on page 101368371725791
-  Uploaded conversation payload to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/conversations/123456789.json (new: True)
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/conversations/123456789.json to Spaces
   ```
-- Facebook message logs (second message):
+- Facebook message webhook (second message):
   ```
   Received webhook event for page 101368371725791: {'id': '101368371725791', 'messaging': [...]}
   Continuing conversation for sender 123456789 on page 101368371725791
-  Uploaded conversation payload to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/conversations/123456789.json (new: False)
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/conversations/123456789.json to Spaces
   ```
-- Shopify logs:
+- Shopify webhook:
   ```
-  Received products/update event from acme-7cu19ngr.myshopify.com: {'product': {'id': 12345, 'title': 'Updated Snowboard'}}
-  Uploaded data to Spaces: users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shopify_data.json
+  Received products/update event from acme-7cu19ngr.myshopify.com: {'product': {'id': 12345, 'title': 'Premium Snowboard Pro'}}
+  Uploaded data to users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_metadata.json and users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_products.json for acme-7cu19ngr.myshopify.com
   ```
 
 **Why?**
-- Verifies webhook endpoints (Subchapters 4.1, 4.2, 5.1) upload to Spaces.
-- Confirms new vs. continuing conversation handling for message webhooks.
+- Confirms webhook endpoints for both platforms upload data to Spaces.
+- Verifies new vs. continuing conversation handling for Facebook.
+- Ensures Shopify data is split into `shop_metadata.json` and `shop_products.json`.
 
 ### Step 4: Verify Polling Functionality
-**Action**: Manually trigger daily polling for both platforms.
+**Action**: Manually trigger polling for both platforms to test Spaces uploads.
 
 **Instructions**:
 1. Modify `app.py` to run `facebook_daily_poll` and `shopify_daily_poll` immediately (temporary):
@@ -246,39 +138,41 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
    shopify_daily_poll()
    ```
 2. Run: `python app.py`.
-3. Check logs for polling results.
+3. Check logs for polling results and Spaces uploads.
 
 **Expected Output**:
-- Facebook logs:
+- Facebook polling:
   ```
   Polled metadata for page 101368371725791: Success
-  Uploaded data to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/page_data.json
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/page_metadata.json to Spaces
   Polled conversations for page 101368371725791: Success
   New conversation polled for sender 123456789 on page 101368371725791
-  Uploaded conversation payloads to Spaces: users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/conversations/123456789.json (new: True)
+  Uploaded users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/conversations/123456789.json to Spaces
   ```
-- Shopify logs:
+- Shopify polling:
   ```
-  Polled data for shop acme-7cu19ngr.myshopify.com: Success
-  Uploaded data to Spaces: users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shopify_data.json
+  Uploaded data to users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_metadata.json and users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_products.json for acme-7cu19ngr.myshopify.com
   ```
 
 **Why?**
-- Confirms polling functions (Subchapters 4.3, 5.2) upload to Spaces, with `poll_facebook_data` using the updated signature.
+- Confirms polling uploads data to Spaces for both platforms.
+- Verifies new vs. continuing conversation handling for Facebook.
+- Ensures Shopify data is split correctly.
 
 ### Step 5: Verify Spaces Storage
-**Action**: Check the Spaces bucket for uploaded files.
+**Action**: Check the DigitalOcean Spaces bucket for uploaded files.
 
 **Instructions**:
-1. In the DigitalOcean control panel, navigate to the Spaces bucket (`gpt-messenger-data`).
-2. Verify files exist:
-   - Metadata: `users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/page_data.json`
-   - Conversations: `users/550e8400-e29b-41d4-a716-446655440000/facebook_messenger/101368371725791/conversations/123456789.json`
-   - Shopify: `users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shopify_data.json`
-3. Download and inspect files to confirm content matches OAuth responses.
+1. Log into your DigitalOcean account and navigate to **Spaces**.
+2. Open the bucket specified in `SPACES_BUCKET`.
+3. Verify the presence and contents of:
+   - `users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/page_metadata.json`
+   - `users/550e8400-e29b-41d4-a716-446655440000/facebook/101368371725791/conversations/123456789.json`
+   - `users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_metadata.json`
+   - `users/550e8400-e29b-41d4-a716-446655440000/shopify/acme-7cu19ngr.myshopify.com/shop_products.json`
 
-**Expected Content** (abridged):
-- Facebook metadata (`page_data.json`):
+**Expected Content**:
+- Facebook metadata (`users/.../facebook/101368371725791/page_metadata.json`):
   ```json
   {
     "data": [
@@ -292,7 +186,7 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
     "paging": {...}
   }
   ```
-- Facebook conversations (`conversations/123456789.json`):
+- Facebook conversations (`users/.../facebook/101368371725791/conversations/123456789.json`):
   ```json
   [
     {
@@ -309,73 +203,76 @@ With Facebook and Shopify data sync updated to use DigitalOcean Spaces (Subchapt
     }
   ]
   ```
-- Shopify (`shopify_data.json`):
+- Shopify metadata (`users/.../shopify/acme-7cu19ngr.myshopify.com/shop_metadata.json`):
   ```json
   {
     "data": {
       "shop": {
-        "name": "acme-7cu19ngr",
-        "primaryDomain": {"url": "https://acme-7cu19ngr.myshopify.com"}
-      },
+        "name": "Acme Snowboards",
+        "primaryDomain": {
+          "url": "https://acme-7cu19ngr.myshopify.com"
+        }
+      }
+    }
+  }
+  ```
+- Shopify products (`users/.../shopify/acme-7cu19ngr.myshopify.com/shop_products.json`):
+  ```json
+  {
+    "data": {
       "products": {
         "edges": [
           {
             "node": {
-              "title": "The Complete Snowboard",
+              "title": "Premium Snowboard",
+              "description": "High-quality snowboard for all levels",
               ...
             }
           }
-        ]
-      }
+        ],
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        }
+      },
+      "codeDiscountNodes": {...},
+      "collections": {...}
     }
   }
   ```
 
 **Why?**
-- Confirms data is stored correctly in Spaces, organized by UUID.
-- Verifies conversation files maintain the array-of-payloads structure from Subchapter 4.2.
+- Confirms data is correctly uploaded to Spaces with the updated path structure.
+- Verifies split Shopify data and Facebook conversation payloads.
 
 ### Step 6: Troubleshoot Issues
-**Action**: Diagnose and fix issues if tests fail.
+**Action**: If logs show failures, diagnose and fix issues.
 
 **Common Issues and Fixes**:
-1. **Webhook Test Failure (`webhook_test: [{"page_id": "...", "type": "...", "result": {"status": "error", "message": "..."}]` or `webhook_test: {"status": "failed", "message": "..."}`)**:
-   - **Cause**: Webhook registration or verification failed.
-   - **Fix**:
-     - Check the `message` (e.g., HTTP 401 for HMAC issues).
-     - Verify `FACEBOOK_WEBHOOK_ADDRESS`, `SHOPIFY_WEBHOOK_ADDRESS`, `FACEBOOK_VERIFY_TOKEN`, `SHOPIFY_API_SECRET` in `.env`.
-     - Ensure webhook addresses are accessible (use ngrok for local testing).
-     - Check logs for `Webhook test result`.
-2. **Polling Test Failure (`polling_test: [{"page_id": "...", "type": "...", "result": {"status": "error", "message": "..."}]` or `polling_test: {"status": "error", "message": "..."}`)**:
-   - **Cause**: Failed to fetch data or upload to Spaces.
-   - **Fix**:
-     - Check the `message` (e.g., “User access token not found” or “Conversation fetch failed”).
-     - Verify tokens in `tokens.db` using `sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"`.
-     - Check logs for API errors (e.g., HTTP 400 or 429).
-3. **Upload Status Failure (`upload_status: [{"page_id": "...", "result": {"status": "failed", "message": "..."}]`)**:
-   - **Cause**: Upload verification failed.
-   - **Fix**: Verify `SPACES_API_KEY`, `SPACES_API_SECRET`, `SPACES_REGION`, `SPACES_BUCKET`, `SPACES_ENDPOINT` in `.env`; check Spaces bucket for files.
-4. **Missing `session_id` Cookie**:
-   - **Cause**: Shopify OAuth not completed.
-   - **Fix**: Run `/shopify/acme-7cu19ngr/login` to set the cookie.
-5. **Empty Data**:
-   - **Cause**: Missing permissions or test data.
-   - **Fix**: Ensure `pages_messaging`, `pages_show_list`, `pages_manage_metadata` (Facebook) and `read_products`, etc. (Shopify) are granted; confirm test data exists (Chapters 1–2).
-6. **CORS Errors**:
-   - **Cause**: Spaces bucket misconfigured.
-   - **Fix**: Verify CORS settings in Spaces (Subchapter 6.3) and `app.py`.
+1. **Webhook Test Failure**:
+   - **Cause**: Webhook registration or HMAC verification failed.
+   - **Fix**: Check logs for errors (e.g., HTTP 401). Verify `FACEBOOK_APP_SECRET`, `SHOPIFY_API_SECRET`, and webhook addresses in `.env`. Ensure webhook URLs are accessible.
+2. **Polling Test Failure**:
+   - **Cause**: Failed to fetch or upload data.
+   - **Fix**: Check logs for API errors (e.g., HTTP 429). Verify tokens in `tokens.db` using `sqlite3 "${TOKEN_DB_PATH:-./data/tokens.db}" "SELECT key FROM tokens;"`.
+3. **Spaces Upload Failure**:
+   - **Cause**: Invalid Spaces credentials or bucket misconfiguration.
+   - **Fix**: Verify `SPACES_KEY`, `SPACES_SECRET`, `SPACES_REGION`, and `SPACES_BUCKET`. Check bucket permissions in DigitalOcean.
+4. **Missing Files in Spaces**:
+   - **Cause**: Uploads failed silently.
+   - **Fix**: Check logs for `boto3` errors. Ensure the bucket exists and is accessible.
 
 **Why?**
-- Uses logs and JSON responses to debug webhook, polling, or Spaces issues.
-- Ensures conversation data is correctly uploaded and retrievable.
+- Uses logs to debug webhook, polling, or Spaces issues.
+- Ensures correct storage paths and data formats.
 
 ### Summary: Why This Subchapter Matters
-- **Functionality Verification**: Confirms webhook and polling systems upload metadata, conversations, and Shopify data to Spaces.
-- **Conversation Tracking**: Verifies new vs. continuing conversation handling in webhook and polling uploads.
-- **Security**: Uses `TokenStorage`, excludes sensitive data, and ensures private ACLs.
-- **Scalability**: Ensures persistent, UUID-organized storage for production.
-- **Bot Readiness**: Provides up-to-date data for customer interactions.
+- **Functionality Verification**: Confirms webhook and polling systems upload data to Spaces for both platforms.
+- **Path Structure**: Verifies `users/<uuid>/facebook/...` and `users/<uuid>/shopify/...` paths, with renamed `facebook` directory and split Shopify files.
+- **Conversation Tracking**: Ensures new vs. continuing conversation handling for Facebook.
+- **Security**: Excludes sensitive data and uses private ACL.
+- **Bot Readiness**: Provides reliable cloud storage for customer interactions.
 
 ### Next Steps:
-- Proceed to Chapter 7 for data backup and recovery.
-- Monitor Spaces uploads for ongoing reliability.
+- Implement data backup and recovery (Chapter 7).
+- Monitor logs for ongoing test success.

@@ -2,7 +2,7 @@
 ## Subchapter 4.2: Setting Up Facebook Messenger Webhooks
 
 ### Introduction
-This subchapter extends the Facebook webhook system from Subchapter 4.1 to handle `messages` events, enabling the GPT Messenger sales bot to capture and store full conversation histories for each user-page interaction. The webhook endpoint processes incoming messages, stores the entire `messaging` event payload in a temporary file (`facebook/<page_id>/conversations/<sender_id>.json`), and identifies whether the message starts a new conversation or continues an existing one based on file existence. The conversation file is an array of raw payloads, ensuring all data (e.g., `sender`, `recipient`, `timestamp`, `message`) is preserved. Future replies by the bot will follow the same payload format for consistency. The system uses the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user and updates the webhook registration to include the `messages` field, leveraging existing permissions (`pages_messaging`, `pages_show_list`, `pages_manage_metadata`) from Chapter 1. Polling for conversation history and testing are covered in Subchapters 4.3 and 4.4.
+This subchapter extends the Facebook webhook system from Subchapter 4.1 to handle `messages` events, enabling the GPT Messenger sales bot to capture and store full conversation histories for each user-page interaction. The webhook endpoint processes incoming messages, stores the entire `messaging` event payload in a temporary file (`facebook/<page_id>/conversations/<sender_id>.json`), and identifies whether the message starts a new conversation or continues an existing one based on file existence. The conversation file is an array of raw payloads, ensuring all data (e.g., `sender`, `recipient`, `timestamp`, `message`) is preserved. Future replies by the bot will follow the same payload format for consistency. The system uses the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user and updates the webhook registration to include the `messages` field, leveraging existing permissions (`pages_messaging`, `pages_show_list`, `pages_manage_metadata`) from Chapter 1. The `facebook` directory name reflects both metadata and messaging data, aligning with the final structure in Chapter 6 (`users/<uuid>/facebook/<page_id>/conversations/<sender_id>.json`). Polling for conversation history and testing are covered in Subchapters 4.3 and 4.4.
 
 ### Prerequisites
 - Completed Chapters 1–3 (Facebook OAuth, Shopify OAuth, Persistent Storage and User Identification) and Subchapter 4.1.
@@ -90,6 +90,7 @@ The project structure remains as defined in Subchapter 4.1:
 - `facebook_integration/` is updated to handle `messages` events, reusing the existing webhook endpoint (`/facebook/webhook`).
 - `shared/sessions.py` and `shared/tokens.py` provide persistent storage from Chapter 3.
 - No new files or dependencies from future chapters (e.g., `digitalocean_integration/` or `boto3`) are included.
+- The `facebook` directory is used for temporary storage, reflecting both metadata (`page_metadata.json`) and messaging (`conversations/<sender_id>.json`), aligning with the final structure in Chapter 6.
 
 ### Step 4: Update `facebook_integration/utils.py`
 Update the `register_webhooks` function to include `messages` in `subscribed_fields`, keeping other functions unchanged to maintain focus on metadata handling from Subchapter 4.1.
@@ -149,7 +150,7 @@ async def register_webhooks(page_id: str, access_token: str):
     url = f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps"
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
-        "subscribed_fields": "name,category,messages",  # Include messages
+        "subscribed_fields": "name,category,messages",
         "callback_url": webhook_address,
         "verify_token": os.getenv("FACEBOOK_VERIFY_TOKEN", "default_verify_token")
     }
@@ -264,9 +265,9 @@ async def oauth_callback(request: Request):
 
         # Temporary file storage for metadata
         os.makedirs(f"facebook/{page_id}", exist_ok=True)
-        with open(f"facebook/{page_id}/page_data.json", "w") as f:
+        with open(f"facebook/{page_id}/page_metadata.json", "w") as f:
             json.dump(pages, f)
-        print(f"Wrote metadata to facebook/{page_id}/page_data.json for page {page_id}")
+        print(f"Wrote metadata to facebook/{page_id}/page_metadata.json for page {page_id}")
 
         # Test metadata webhook
         test_metadata_payload = {
@@ -388,9 +389,9 @@ async def facebook_webhook(request: Request):
             try:
                 page_data = await get_facebook_data(access_token)
                 os.makedirs(f"facebook/{page_id}", exist_ok=True)
-                with open(f"facebook/{page_id}/page_data.json", "w") as f:
+                with open(f"facebook/{page_id}/page_metadata.json", "w") as f:
                     json.dump(page_data, f)
-                print(f"Wrote metadata to facebook/{page_id}/page_data.json for page {page_id}")
+                print(f"Wrote metadata to facebook/{page_id}/page_metadata.json for page {page_id}")
             except Exception as e:
                 print(f"Failed to write metadata for page {page_id}: {str(e)}")
 
@@ -409,10 +410,10 @@ async def verify_webhook_subscription(request: Request):
 
 **Why?**
 - **Login Endpoint**: Reuses `SessionStorage` for UUID retrieval (Chapter 3).
-- **Callback Endpoint**: Registers webhooks for `name,category,messages`, tests both metadata and message webhooks, stores metadata in temporary files, and returns non-sensitive page data with `user_uuid` and `webhook_test` results.
-- **Webhook Endpoint**: Stores the entire `messaging` event payload in `facebook/<page_id>/conversations/<sender_id>.json` as an array, identifying new vs. continuing conversations via file existence. Handles `name,category` events as in Subchapter 4.1.
+- **Callback Endpoint**: Registers webhooks for `name,category,messages`, tests both metadata and message webhooks, stores metadata in temporary files (`facebook/<page_id>/page_metadata.json`), and returns non-sensitive page data with `user_uuid` and `webhook_test` results. The `facebook` directory reflects both metadata and messaging, aligning with `users/<uuid>/facebook/<page_id>/...` in Chapter 6.
+- **Webhook Endpoint**: Stores the entire `messaging` event payload in `facebook/<page_id>/conversations/<sender_id>.json` as an array, identifying new vs. continuing conversations via file existence. Handles `name,category` events as in Subchapter 4.1, using `page_metadata.json`.
 - **Security**: Excludes tokens, uses HMAC verification, and clears sessions.
-- **Temporary Storage**: Uses file-based storage, avoiding future dependencies like Spaces.
+- **Temporary Storage**: Uses file-based storage, preparing for Spaces in Chapter 6.
 - **Conversation Tracking**: Logs “New conversation started” or “Continuing conversation” based on file existence, using the payload’s `sender_id` and `timestamp` for organization.
 
 ### Step 6: Update `requirements.txt`
@@ -445,7 +446,7 @@ facebook/
 
 **Why?**
 - Excludes `tokens.db`, `sessions.db`, and temporary files (`facebook/<page_id>/...`) to prevent committing sensitive data.
-- Covers both metadata (`page_data.json`) and conversation files (`conversations/<sender_id>.json`).
+- Covers metadata (`page_metadata.json`) and conversation files (`conversations/<sender_id>.json`) in the `facebook` directory.
 
 ### Step 8: Testing Preparation
 To verify the message webhook setup:
@@ -490,7 +491,7 @@ To verify the message webhook setup:
       "sender": {"id": "123456789"},
       "recipient": {"id": "101368371725791"},
       "timestamp": 1697051250000,
-      "message": {"mid": "m_def456", "text": "Can you send me the price list?"}
+      "message": {"mid": "m_def456", "text": "Can you send the price list?"}
     }
   ]
   ```
@@ -502,7 +503,7 @@ To verify the message webhook setup:
 - **Security**: HMAC verification, `TokenStorage`, and `SessionStorage` ensure secure, multi-user operation.
 - **UUID Integration**: Organizes conversation data by UUID from Chapter 3.
 - **Scalability**: Async processing supports high traffic.
-- **Temporary Storage**: Uses file-based storage, preparing for future enhancements.
+- **Temporary Storage**: Uses `facebook/<page_id>/...`, preparing for Spaces in Chapter 6 (`users/<uuid>/facebook/<page_id>/...`).
 
 ### Next Steps:
 - Implement polling for metadata and conversations (Subchapter 4.3).

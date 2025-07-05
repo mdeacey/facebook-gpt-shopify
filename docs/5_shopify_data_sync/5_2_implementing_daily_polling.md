@@ -2,23 +2,24 @@
 ## Subchapter 5.2: Implementing Daily Polling for Redundancy
 
 ### Introduction
-While Shopify webhooks (Subchapter 5.1) provide real-time product updates, they can miss events due to network issues or downtime. This subchapter implements a daily polling mechanism to fetch shop and product data periodically, ensuring the GPT Messenger sales bot’s data remains current. Polling uses the SQLite-based `TokenStorage` (Chapter 3) for token and UUID retrieval and stores data temporarily in `<shop_name>/shopify_data.json`, preparing for cloud storage in Chapter 6. We integrate polling into the OAuth flow for testing and schedule it daily using APScheduler, maintaining non-sensitive data for secure, production-ready operation.
+While Shopify webhooks (Subchapter 5.1) provide real-time product updates, they can miss events due to network issues or downtime. This subchapter implements a daily polling mechanism to fetch shop and product data periodically, ensuring the GPT Messenger sales bot’s data remains current. Polling uses the SQLite-based `TokenStorage` (Chapter 3) for token and UUID retrieval and stores data temporarily in `<shop_name>/shop_metadata.json` for shop details and `<shop_name>/shop_products.json` for products, discounts, and collections, preparing for cloud storage in Chapter 6 (`users/<uuid>/shopify/<shop_name>/shop_metadata.json` and `users/<uuid>/shopify/<shop_name>/shop_products.json`). We integrate polling into the OAuth flow for testing and schedule it daily using APScheduler, maintaining non-sensitive data for secure, production-ready operation.
 
 ### Prerequisites
 - Completed Chapters 1–4 and Subchapter 5.1.
-- FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment.
-- Shopify API credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`, `SHOPIFY_WEBHOOK_ADDRESS`) and `STATE_TOKEN_SECRET` set in `.env`.
+- FastAPI application running locally (e.g., `http://localhost:5000`) or in a production-like environment (e.g., GitHub Codespaces).
+- Shopify API credentials (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_REDIRECT_URI`, `SHOPIFY_WEBHOOK_ADDRESS`) and `STATE_TOKEN_SECRET` set in `.env` (Chapter 2, Subchapter 5.1).
 - `session_id` cookie set by Shopify OAuth (Chapter 3).
 - SQLite databases (`tokens.db`, `sessions.db`) set up (Chapter 3).
+- Permissions `read_product_listings`, `read_inventory`, `read_discounts`, `read_locations`, `read_products` configured in Shopify Admin (Chapter 2).
 
 ---
 
 ### Step 1: Why Daily Polling?
 Polling complements webhooks by:
-- Fetching shop, product, discount, and collection data daily to catch missed events.
-- Using `TokenStorage` for consistent token/UUID retrieval.
-- Ensuring data availability for the sales bot (e.g., product titles, inventory).
-- Supporting multiple users via SQLite-based storage.
+- Fetching shop metadata (e.g., `name`, `primaryDomain`) and product data (products, discounts, collections) daily to catch missed events.
+- Using `TokenStorage` for consistent token/UUID retrieval (Chapter 3).
+- Ensuring data availability for the sales bot (e.g., product titles, inventory levels).
+- Supporting multiple users via SQLite-based storage and temporary files, split into `shop_metadata.json` and `shop_products.json` for modularity.
 
 ### Step 2: Update Project Structure
 The project structure remains as defined in Subchapter 5.1:
@@ -48,11 +49,13 @@ The project structure remains as defined in Subchapter 5.1:
 
 **Why?**
 - `shopify_integration/utils.py` handles polling logic using `TokenStorage`.
-- `shared/sessions.py` and `shared/tokens.py` support persistent storage.
-- Excludes Spaces integration (Chapter 6).
+- `app.py` integrates APScheduler for scheduling.
+- `shared/sessions.py` and `shared/tokens.py` support persistent storage (Chapter 3).
+- No dependencies from future chapters (e.g., `digitalocean_integration` or `boto3`) are included.
+- Temporary storage uses `<shop_name>/shop_metadata.json` and `<shop_name>/shop_products.json`, aligning with Chapter 6’s structure.
 
 ### Step 3: Update `app.py`
-Add APScheduler to schedule daily polling for Shopify shops.
+Add APScheduler to schedule daily polling for Shopify shops, alongside Facebook polling (Subchapter 4.3).
 
 ```python
 from fastapi import FastAPI
@@ -101,13 +104,13 @@ async def root():
 scheduler = BackgroundScheduler()
 scheduler.add_job(
     facebook_daily_poll,
-    trigger=CronTrigger(hour=0, minute=0),
+    trigger=CronTrigger(hour=0, minute=0),  # Run daily at midnight
     id="facebook_daily_poll",
     replace_existing=True
 )
 scheduler.add_job(
     shopify_daily_poll,
-    trigger=CronTrigger(hour=0, minute=0),
+    trigger=CronTrigger(hour=0, minute=30),  # Run 30 minutes after Facebook
     id="shopify_daily_poll",
     replace_existing=True
 )
@@ -121,13 +124,13 @@ if __name__ == "__main__":
 ```
 
 **Why?**
-- **Scheduler**: Runs `shopify_daily_poll` daily at midnight, alongside `facebook_daily_poll`.
+- **Scheduler**: Schedules `shopify_daily_poll` at 00:30 to avoid conflicts with `facebook_daily_poll`.
+- **Environment Validation**: Includes Shopify webhook variables from Subchapter 5.1.
 - **Shutdown Hook**: Ensures clean scheduler shutdown.
-- **Environment Validation**: Includes webhook variables.
-- **Modular Routers**: Supports both OAuth flows.
+- **Excludes Future Dependencies**: No references to Spaces or `boto3` (Chapter 6).
 
 ### Step 4: Update `shopify_integration/utils.py`
-Add a polling function using `TokenStorage`, storing data temporarily.
+Add a `daily_poll` function to fetch shop metadata and product data, storing them in split files.
 
 ```python
 import os
@@ -154,15 +157,39 @@ async def exchange_code_for_token(code: str, shop: str):
         response.raise_for_status()
         return response.json()
 
-async def get_shopify_data(access_token: str, shop: str, retries=3):
+async def get_shopify_metadata(access_token: str, shop: str, retries=3):
     url = f"https://{shop}/admin/api/2025-04/graphql.json"
     headers = {
         "X-Shopify-Access-Token": access_token,
         "Content-Type": "application/json"
     }
     query = """
-    query SalesBotQuery {
+    query ShopMetadataQuery {
       shop { name primaryDomain { url } }
+    }
+    """
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=headers, json={"query": query})
+                response.raise_for_status()
+                data = response.json()
+                if "errors" in data:
+                    raise HTTPException(status_code=400, detail=f"GraphQL error: {data['errors']}")
+                return data
+        except httpx.HTTPStatusError as e:
+            if attempt == retries - 1 or e.response.status_code != 429:
+                raise
+            await asyncio.sleep(2 ** attempt)
+
+async def get_shopify_products(access_token: str, shop: str, retries=3):
+    url = f"https://{shop}/admin/api/2025-04/graphql.json"
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
+    query = """
+    query ShopProductsQuery {
       products(first: 50, sortKey: RELEVANCE) {
         edges {
           node {
@@ -276,53 +303,45 @@ async def register_webhooks(shop: str, access_token: str):
             print(f"Webhook registered for {shop}: products/update")
         else:
             print(f"Failed to register webhook for {shop}: {response.text}")
-
-async def poll_shopify_data(access_token: str, shop: str):
-    try:
-        shopify_data = await get_shopify_data(access_token, shop)
-        shop_key = shop.replace('.', '_')
-        user_uuid = token_storage.get_token(f"USER_UUID_{shop_key}")
-        if not user_uuid:
-            return {"status": "error", "message": f"User UUID not found for shop {shop}"}
-
-        os.makedirs(shop, exist_ok=True)
-        with open(f"{shop}/shopify_data.json", "w") as f:
-            json.dump(shopify_data, f)
-        print(f"Wrote data to {shop}/shopify_data.json for {shop}")
-        return {"status": "success"}
-    except Exception as e:
-        print(f"Failed to poll data for {shop}: {str(e)}")
-        return {"status": "error", "message": str(e)}
+            raise HTTPException(status_code=500, detail=f"Failed to register webhook: {response.text}")
 
 async def daily_poll():
-    shops = [
-        key.replace("SHOPIFY_ACCESS_TOKEN_", "").replace("_", ".")
+    shop_keys = [
+        key.replace("SHOPIFY_ACCESS_TOKEN_", "")
         for key in token_storage.get_all_tokens_by_type("token")
         if key.startswith("SHOPIFY_ACCESS_TOKEN_")
     ]
-
-    for shop in shops:
+    for shop_key in shop_keys:
         try:
-            shop_key = shop.replace('.', '_')
             access_token = token_storage.get_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}")
-            if access_token:
-                result = await poll_shopify_data(access_token, shop)
-                if result["status"] == "success":
-                    print(f"Polled data for shop {shop}: Success")
-                else:
-                    print(f"Polling failed for shop {shop}: {result['message']}")
+            shop = shop_key.replace('_', '.')
+            if not access_token:
+                print(f"Access token not found for shop {shop}")
+                continue
+            user_uuid = token_storage.get_token(f"USER_UUID_{shop_key}")
+            if not user_uuid:
+                print(f"User UUID not found for shop {shop}")
+                continue
+            shop_metadata = await get_shopify_metadata(access_token, shop)
+            shop_products = await get_shopify_products(access_token, shop)
+            os.makedirs(shop, exist_ok=True)
+            with open(f"{shop}/shop_metadata.json", "w") as f:
+                json.dump(shop_metadata, f)
+            with open(f"{shop}/shop_products.json", "w") as f:
+                json.dump(shop_products, f)
+            print(f"Polled and wrote data to {shop}/shop_metadata.json and {shop}/shop_products.json for {shop}")
         except Exception as e:
             print(f"Daily poll failed for shop {shop}: {str(e)}")
 ```
 
 **Why?**
-- **Polling Function**: `poll_shopify_data` fetches shop data using `TokenStorage`, storing in temporary files.
-- **Daily Poll**: `daily_poll` iterates over shop tokens in `tokens.db`, calling `poll_shopify_data`.
-- **Error Handling**: Returns status and error messages.
-- **Temporary Storage**: Prepares for cloud storage in Chapter 6.
+- **Polling Function**: `daily_poll` fetches metadata and products, storing them in `<shop_name>/shop_metadata.json` and `<shop_name>/shop_products.json`, using `TokenStorage` for token/UUID retrieval.
+- **Split Data**: Separates shop metadata and product data for modularity, aligning with Subchapter 5.1 and Chapter 6’s cloud storage structure.
+- **Error Handling**: Logs failures for debugging.
+- **Excludes Future Dependencies**: No Spaces or `boto3` references (Chapter 6).
 
 ### Step 5: Update `shopify_integration/routes.py`
-Integrate polling into the OAuth flow for immediate testing.
+Integrate polling tests into the OAuth flow, testing both metadata and product polling.
 
 ```python
 import os
@@ -330,7 +349,7 @@ import uuid
 import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, poll_shopify_data
+from .utils import exchange_code_for_token, get_shopify_metadata, get_shopify_products, verify_hmac, register_webhooks, daily_poll
 from shared.utils import generate_state_token, validate_state_token
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
@@ -414,20 +433,35 @@ async def oauth_callback(request: Request):
         webhook_test_result = {"status": "failed", "message": f"Webhook setup failed: {str(e)}"}
         print(f"Webhook setup failed for {shop}: {str(e)}")
 
-    shopify_data = await get_shopify_data(token_data["access_token"], shop)
-
-    polling_test_result = await poll_shopify_data(token_data["access_token"], shop)
-    print(f"Polling test result for {shop}: {polling_test_result}")
+    shop_metadata = await get_shopify_metadata(token_data["access_token"], shop)
+    shop_products = await get_shopify_products(token_data["access_token"], shop)
 
     os.makedirs(shop, exist_ok=True)
-    with open(f"{shop}/shopify_data.json", "w") as f:
-        json.dump(shopify_data, f)
-    print(f"Wrote data to {shop}/shopify_data.json for {shop}")
+    with open(f"{shop}/shop_metadata.json", "w") as f:
+        json.dump(shop_metadata, f)
+    with open(f"{shop}/shop_products.json", "w") as f:
+        json.dump(shop_products, f)
+    print(f"Wrote metadata to {shop}/shop_metadata.json and products to {shop}/shop_products.json for {shop}")
+
+    # Test polling
+    polling_test_result = {"status": "failed", "message": "Polling test failed"}
+    try:
+        shop_key = shop.replace('.', '_')
+        token_storage.store_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}", token_data["access_token"], type="token")
+        await daily_poll()
+        polling_test_result = {"status": "success"}
+        print(f"Polling test result for {shop}: Success")
+    except Exception as e:
+        polling_test_result = {"status": "failed", "message": f"Polling test failed: {str(e)}"}
+        print(f"Polling test failed for {shop}: {str(e)}")
 
     response = JSONResponse(content={
         "user_uuid": user_uuid,
         "token_data": token_data,
-        "shopify_data": shopify_data,
+        "shopify_data": {
+            "metadata": shop_metadata,
+            "products": shop_products
+        },
         "webhook_test": webhook_test_result,
         "polling_test": polling_test_result
     })
@@ -457,11 +491,14 @@ async def shopify_webhook(request: Request):
     print(f"Received {event_type} event from {shop}: {payload}")
 
     try:
-        shopify_data = await get_shopify_data(access_token, shop)
+        shop_metadata = await get_shopify_metadata(access_token, shop)
+        shop_products = await get_shopify_products(access_token, shop)
         os.makedirs(shop, exist_ok=True)
-        with open(f"{shop}/shopify_data.json", "w") as f:
-            json.dump(shopify_data, f)
-        print(f"Wrote data to {shop}/shopify_data.json for {shop}")
+        with open(f"{shop}/shop_metadata.json", "w") as f:
+            json.dump(shop_metadata, f)
+        with open(f"{shop}/shop_products.json", "w") as f:
+            json.dump(shop_products, f)
+        print(f"Wrote metadata to {shop}/shop_metadata.json and products to {shop}/shop_products.json for {shop}")
     except Exception as e:
         print(f"Failed to write data for {shop}: {str(e)}")
 
@@ -469,13 +506,14 @@ async def shopify_webhook(request: Request):
 ```
 
 **Why?**
-- **Login Endpoint**: Initiates OAuth with scopes for products and inventory.
-- **Callback Endpoint**: Tests polling and webhooks, stores data in `<shop_name>/shopify_data.json`, sets the `session_id` cookie, and returns results with `user_uuid`.
-- **Webhook Endpoint**: Processes `products/update` events, storing updates with `TokenStorage`.
-- **Security**: Uses HMAC, excludes tokens, and sets a secure cookie.
+- **Login Endpoint**: Reuses OAuth setup from Chapter 2.
+- **Callback Endpoint**: Tests polling alongside webhooks, storing results in `polling_test_result`, and stores data in split files (`<shop_name>/shop_metadata.json` and `<shop_name>/shop_products.json`).
+- **Webhook Endpoint**: Unchanged from Subchapter 5.1, included for completeness.
+- **Security**: Uses HMAC verification, excludes tokens, and sets secure cookies.
+- **Temporary Storage**: Uses split files, preparing for Spaces in Chapter 6.
 
 ### Step 6: Update `requirements.txt`
-Ensure APScheduler is included.
+Ensure dependencies support polling.
 
 ```plaintext
 fastapi
@@ -487,11 +525,12 @@ apscheduler
 ```
 
 **Why?**
-- `apscheduler` enables daily polling.
+- `apscheduler` supports polling (introduced in Subchapter 4.3, reused here).
 - `cryptography` supports `TokenStorage` and `SessionStorage`.
+- Excludes `boto3` (Chapter 6).
 
 ### Step 7: Update `.gitignore`
-Ensure SQLite databases are excluded.
+Ensure temporary Shopify files are excluded.
 
 ```plaintext
 __pycache__/
@@ -499,24 +538,34 @@ __pycache__/
 .env
 .DS_Store
 *.db
+facebook/
+*.myshopify.com/
 ```
 
 **Why?**
-- Excludes `tokens.db` and `sessions.db`.
+- Excludes `tokens.db`, `sessions.db`, and temporary Shopify files (`<shop_name>/shop_metadata.json`, `<shop_name>/shop_products.json`).
 
 ### Step 8: Testing Preparation
 To verify polling:
-1. Update `.env` with `SHOPIFY_WEBHOOK_ADDRESS`.
+1. Update `.env` with required variables (Subchapter 5.1).
 2. Install dependencies: `pip install -r requirements.txt`.
 3. Run the app: `python app.py`.
-4. Complete Shopify OAuth to set the `session_id` cookie and test polling.
+4. Complete Shopify OAuth to test polling.
 5. Testing details are in Subchapter 5.3.
 
+**Expected Output** (example logs during OAuth):
+```
+Webhook test result for acme-7cu19ngr.myshopify.com: {'status': 'success'}
+Wrote metadata to acme-7cu19ngr.myshopify.com/shop_metadata.json and products to acme-7cu19ngr.myshopify.com/shop_products.json for acme-7cu19ngr.myshopify.com
+Polling test result for acme-7cu19ngr.myshopify.com: Success
+```
+
 ### Summary: Why This Subchapter Matters
-- **Data Redundancy**: Polling ensures data consistency alongside webhooks.
+- **Data Redundancy**: Polling ensures shop and product data are complete, complementing webhooks.
 - **UUID Integration**: Uses `TokenStorage` for multi-platform linking.
 - **Scalability**: Async polling and scheduling support production environments.
-- **Temporary Storage**: Prepares for cloud storage in Chapter 6.
+- **Temporary Storage**: Uses `<shop_name>/shop_metadata.json` and `<shop_name>/shop_products.json`, preparing for cloud storage in Chapter 6.
+- **Modularity**: Split files enhance data organization.
 
 ### Next Steps:
 - Test webhooks and polling (Subchapter 5.3).

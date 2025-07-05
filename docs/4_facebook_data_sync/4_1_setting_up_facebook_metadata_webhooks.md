@@ -2,7 +2,7 @@
 ## Subchapter 4.1: Setting Up Facebook Metadata Webhooks
 
 ### Introduction
-Facebook webhooks enable real-time notifications for page metadata events (e.g., changes to `name` or `category`) to keep the GPT Messenger sales bot’s data up-to-date. This subchapter sets up a secure webhook endpoint in the FastAPI application, integrating HMAC verification and registering webhooks during the OAuth flow with appropriate permissions (`pages_show_list`, `pages_manage_metadata`). The webhook system uses the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user and temporarily stores non-sensitive metadata in a file-based structure (`facebook/<page_id>/page_data.json`). Message handling is covered in Subchapter 4.2, with polling and testing in Subchapters 4.3 and 4.4.
+Facebook webhooks enable real-time notifications for page metadata events (e.g., changes to `name` or `category`) to keep the GPT Messenger sales bot’s data up-to-date. This subchapter sets up a secure webhook endpoint in the FastAPI application, integrating HMAC verification and registering webhooks during the OAuth flow with appropriate permissions (`pages_show_list`, `pages_manage_metadata`). The webhook system uses the UUID from the SQLite-based session mechanism (Chapter 3) to identify the user and temporarily stores non-sensitive metadata in a file-based structure (`facebook/<page_id>/page_metadata.json`). Message handling is covered in Subchapter 4.2, with polling and testing in Subchapters 4.3 and 4.4. The `facebook` directory name reflects both metadata and messaging data, aligning with the final structure in Chapter 6 (`users/<uuid>/facebook/<page_id>/page_metadata.json`).
 
 ### Prerequisites
 - Completed Chapters 1–3 (Facebook OAuth, Shopify OAuth, Persistent Storage and User Identification).
@@ -133,7 +133,7 @@ async def verify_webhook(request: Request) -> bool:
     secret = os.getenv("FACEBOOK_APP_SECRET")
     expected_hmac = hmac.new(secret.encode(), body, hashlib.sha1).hexdigest()
     expected_signature = f"sha1={expected_hmac}"
-    return hmac.compareDigest(signature, expected_signature)
+    return hmac.compare_digest(signature, expected_signature)
 
 async def register_webhooks(page_id: str, access_token: str):
     webhook_address = os.getenv("FACEBOOK_WEBHOOK_ADDRESS")
@@ -258,9 +258,9 @@ async def oauth_callback(request: Request):
 
         # Temporary file storage for metadata
         os.makedirs(f"facebook/{page_id}", exist_ok=True)
-        with open(f"facebook/{page_id}/page_data.json", "w") as f:
+        with open(f"facebook/{page_id}/page_metadata.json", "w") as f:
             json.dump(pages, f)
-        print(f"Wrote metadata to facebook/{page_id}/page_data.json for page {page_id}")
+        print(f"Wrote metadata to facebook/{page_id}/page_metadata.json for page {page_id}")
 
         # Test metadata webhook
         test_payload = {"object": "page", "entry": [{"id": page_id, "changes": [{"field": "name", "value": "Test Page"}]}]}
@@ -321,9 +321,9 @@ async def facebook_webhook(request: Request):
         try:
             page_data = await get_facebook_data(access_token)
             os.makedirs(f"facebook/{page_id}", exist_ok=True)
-            with open(f"facebook/{page_id}/page_data.json", "w") as f:
+            with open(f"facebook/{page_id}/page_metadata.json", "w") as f:
                 json.dump(page_data, f)
-            print(f"Wrote metadata to facebook/{page_id}/page_data.json for page {page_id}")
+            print(f"Wrote metadata to facebook/{page_id}/page_metadata.json for page {page_id}")
         except Exception as e:
             print(f"Failed to write metadata for page {page_id}: {str(e)}")
 
@@ -342,10 +342,10 @@ async def verify_webhook_subscription(request: Request):
 
 **Why?**
 - **Login Endpoint**: Uses `SessionStorage` to retrieve the UUID from the `session_id` cookie (Chapter 3).
-- **Callback Endpoint**: Registers metadata webhooks, tests the webhook endpoint, stores metadata in temporary files, and returns non-sensitive page data with `user_uuid` and `webhook_test`.
+- **Callback Endpoint**: Registers metadata webhooks, tests the webhook endpoint, stores metadata in temporary files (`facebook/<page_id>/page_metadata.json`), and returns non-sensitive page data with `user_uuid` and `webhook_test`. The `facebook` directory reflects both metadata and messaging, aligning with the final `users/<uuid>/facebook/<page_id>/page_metadata.json` in Chapter 6.
 - **Webhook Endpoint**: Processes `name,category` events, storing updates in temporary files using `TokenStorage`.
 - **Security**: Excludes tokens, uses HMAC verification, and clears sessions.
-- **Temporary Storage**: Uses `facebook/<page_id>/page_data.json`, avoiding Spaces or other future dependencies.
+- **Temporary Storage**: Uses `facebook/<page_id>/page_metadata.json`, preparing for Spaces in Chapter 6.
 
 ### Step 5: Configure Webhook in Facebook Developer Portal
 **Action**: Set up the webhook in the Meta Developer Portal:
@@ -393,11 +393,12 @@ __pycache__/
 .env
 .DS_Store
 *.db
+facebook/
 ```
 
 **Why?**
-- Excludes `tokens.db` and `sessions.db` to prevent committing sensitive data.
-- Consistent with Chapters 1–3.
+- Excludes `tokens.db`, `sessions.db`, and temporary files (`facebook/<page_id>/...`) to prevent committing sensitive data.
+- Covers metadata (`page_metadata.json`) files in the `facebook` directory.
 
 ### Step 8: Testing Preparation
 To verify the metadata webhook setup:
@@ -413,7 +414,7 @@ To verify the metadata webhook setup:
 - **Security**: HMAC verification, `TokenStorage`, and `SessionStorage` ensure secure, multi-user operation.
 - **UUID Integration**: Links data using the UUID from Chapter 3.
 - **Scalability**: Async processing supports high traffic.
-- **Temporary Storage**: Uses file-based storage, preparing for future enhancements.
+- **Temporary Storage**: Uses `facebook/<page_id>/page_metadata.json`, preparing for cloud storage in Chapter 6.
 
 ### Next Steps:
 - Implement message webhooks (Subchapter 4.2).
