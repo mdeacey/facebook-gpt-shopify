@@ -4,6 +4,7 @@ import json
 import hmac
 import hashlib
 import boto3
+import time
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions, poll_facebook_data, poll_facebook_conversations
@@ -11,6 +12,7 @@ from shared.utils import generate_state_token, validate_state_token
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
+from digitalocean_integration.agent import generate_agent_response, send_facebook_message
 import httpx
 
 router = APIRouter()
@@ -235,6 +237,10 @@ async def facebook_webhook(request: Request):
                 if not sender_id or not recipient_id or sender_id == page_id:
                     continue
 
+                message_text = message_event.get("message", {}).get("text")
+                if not message_text:
+                    continue
+
                 spaces_key = f"users/{user_uuid}/facebook/{page_id}/conversations/{sender_id}.json"
                 conversation = []
                 is_new_conversation = False
@@ -250,6 +256,24 @@ async def facebook_webhook(request: Request):
                 if has_data_changed(conversation, spaces_key, s3_client):
                     upload_to_spaces(conversation, spaces_key, s3_client)
                     print(f"Uploaded conversation payload to Spaces: {spaces_key} (new: {is_new_conversation})")
+
+                try:
+                    agent_response = await generate_agent_response(page_id, sender_id, message_text, user_uuid)
+                    response_text = agent_response["text"]
+                    sent_message_id = await send_facebook_message(page_id, sender_id, response_text, access_token)
+
+                    agent_payload = {
+                        "sender": {"id": page_id},
+                        "recipient": {"id": sender_id},
+                        "timestamp": int(time.time() * 1000),
+                        "message": {"mid": sent_message_id, "text": response_text}
+                    }
+                    conversation.append(agent_payload)
+                    if has_data_changed(conversation, spaces_key, s3_client):
+                        upload_to_spaces(conversation, spaces_key, s3_client)
+                        print(f"Uploaded AI response to Spaces: {spaces_key}")
+                except Exception as e:
+                    print(f"Failed to generate or send AI response for sender {sender_id} on page {page_id}: {str(e)}")
 
         if "changes" in entry:
             try:

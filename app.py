@@ -18,7 +18,8 @@ required_env_vars = [
     "FACEBOOK_WEBHOOK_ADDRESS", "FACEBOOK_VERIFY_TOKEN",
     "SHOPIFY_API_KEY", "SHOPIFY_API_SECRET", "SHOPIFY_REDIRECT_URI",
     "SHOPIFY_WEBHOOK_ADDRESS", "SPACES_API_KEY", "SPACES_API_SECRET",
-    "SPACES_BUCKET", "SPACES_REGION", "STATE_TOKEN_SECRET"
+    "SPACES_BUCKET", "SPACES_REGION", "STATE_TOKEN_SECRET",
+    "GENAI_API_KEY"
 ]
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
 if missing_vars:
