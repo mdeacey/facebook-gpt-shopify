@@ -1,11 +1,11 @@
 # Chapter 8: Advanced Agent Deployment
-## Subchapter 8.1: Creating an AI Agent on DigitalOcean
+## Subchapter 8.2: Configuring Agent Access Keys on DigitalOcean
 
 ### Introduction
-This subchapter guides you through creating an AI agent on DigitalOcean’s GenAI Platform to enhance the GPT Messenger sales bot with advanced capabilities. The agent leverages the Llama 3.3 Instruct model for domain-specific tasks, integrating with the previously created workspace and Spaces bucket from Chapters 6–7. The process involves configuring the agent with instructions and deploying it within the DigitalOcean control panel, ensuring seamless integration with the FastAPI application.
+This subchapter guides you through setting up an AI agent on DigitalOcean’s GenAI Platform and configuring access keys to enable secure integration with the GPT Messenger sales bot. The process includes deploying the agent with the Llama 3.3 Instruct model and generating endpoint access keys for use with the FastAPI application, building on the workspace and Spaces bucket established in previous chapters.
 
 ### Prerequisites
-- Completed Chapters 1–7 and Subchapters 8.1–8.2.
+- Completed Chapters 1–7 and Subchapter 8.1.
 - DigitalOcean account with access to the GenAI Platform.
 - Workspace `facebook-gpt-shopfiy-agents` and Spaces bucket `shopify-genai-data` set up (Chapter 6).
 - FastAPI application running on a DigitalOcean Droplet or locally.
@@ -18,8 +18,8 @@ This subchapter guides you through creating an AI agent on DigitalOcean’s GenA
 **Screenshot Reference**: Shows the DigitalOcean dashboard.
 
 **Why?**
-- The control panel manages the GenAI Platform and agent creation.
-- Ensures you have access to deploy an AI agent for the sales bot.
+- The control panel manages the GenAI Platform and agent deployment.
+- Ensures you have access to configure and deploy the agent.
 
 ### Step 2: Navigate to GenAI Platform
 **Action**: In the left sidebar, click “GenAI Platform” under “Manage” and select “New” to start the agent creation process.
@@ -30,36 +30,38 @@ This subchapter guides you through creating an AI agent on DigitalOcean’s GenA
 - The GenAI Platform hosts AI agent development and deployment.
 - Initiates the creation of a new agent for the sales bot.
 
-### Step 3: Create a New Workspace
-**Action**: Choose “Create New” workspace, then configure the following:
+### Step 3: Create a New Agent
+**Action**: Choose “Create New” workspace if not already created, then configure the agent:
 - **Workspace name**: Enter `facebook-gpt-shopfiy-agents`.
-- **Workspace description**: Provide a short description, e.g., “Workspace for managing Facebook and Shopify sales bot agents.”
-
-**Screenshot Reference**: Shows the workspace creation form with fields filled.
-
-**Why?**
-- A workspace organizes agents and provides a dedicated environment.
-- Helps group agents related to the sales bot for better management.
-
-### Step 4: Configure the Agent
-**Action**: Click “Create” to proceed, then configure the agent:
 - **Agent name**: Enter `facebook-gpt-shopfiy-agent`.
 - **Agent instructions**: Provide instructions, e.g., “Assist users with Facebook and Shopify sales inquiries, using data from the shopify-genai-data bucket.”
 - **Select a model**: Choose Llama 3.3 Instruct (70B) with $0.65000/1M input tokens and $0.65000/1M output tokens.
+- Click “Create Agent” to initiate deployment.
 
-**Screenshot Reference**: Shows the agent configuration form with fields filled.
+**Screenshot Reference**: Shows the agent configuration form and deployment in progress banner.
 
 **Why?**
-- Defines the agent’s role and expertise for sales support.
-- Ensures the model aligns with the agent’s intended use case.
+- Sets up a dedicated agent for sales support within the workspace.
+- Deploys the agent for use with the sales bot.
 
-### Step 5: Deploy the Agent
-**Action**: Click “Create Agent” to initiate deployment. Monitor the deployment progress.
+### Step 4: Monitor Deployment
+**Action**: Wait for the deployment to complete. The “Agent deployment in progress...” banner will dismiss once finished.
 
 **Screenshot Reference**: Shows the deployment in progress banner.
 
 **Why?**
-- Deploys the agent for use with the sales bot.
-- Allows testing and integration with the FastAPI application.
+- Ensures the agent is fully deployed before proceeding.
+- Allows time for the system to configure the agent environment.
+
+### Step 5: Create Agent Access Key
+**Action**: Navigate to the agent settings, click “Create Key” under “Endpoint Access Keys”, and configure:
+- **Key name**: Enter `facebook-gpt-shopfiy-agent`.
+- Copy the generated secret key (e.g., `1XxJxhVp4F3z0ejVF_NDrTKd8QYMUJL3`) immediately, as it won’t be shown again.
+
+**Screenshot Reference**: Shows the “Create Agent Access Key” popup and the key generation confirmation.
+
+**Why?**
+- Generates secure access keys for the agent endpoint.
+- Enables the FastAPI application to authenticate and interact with the agent.
 
 ---
