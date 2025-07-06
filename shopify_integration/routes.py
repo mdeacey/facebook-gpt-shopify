@@ -1,7 +1,6 @@
 import os
 import json
 import boto3
-import uuid
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, poll_shopify_data
@@ -49,18 +48,18 @@ async def oauth_callback(request: Request):
 
     validate_state_token(state)
 
+    session_id = request.cookies.get("session_id")
+    user_uuid = session_storage.verify_session(session_id)
+
+    new_session_id, user_uuid = session_storage.get_or_create_session(session_id)
+
     token_data = await exchange_code_for_token(code, shop)
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
     shop_key = shop.replace('.', '_')
     token_storage.store_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}", token_data["access_token"], type="token")
-
-    user_uuid = str(uuid.uuid4())
     token_storage.store_token(f"USER_UUID_{shop_key}", user_uuid, type="uuid")
-
-    session_id = session_storage.generate_session_id()
-    session_storage.store_uuid(session_id, user_uuid)
 
     webhook_test_result = {"status": "failed", "message": "Webhook registration failed"}
     try:
@@ -129,7 +128,7 @@ async def oauth_callback(request: Request):
         "polling_test": polling_test_result,
         "upload_status": upload_status_result
     })
-    response.set_cookie(key="session_id", value=session_id, httponly=True, max_age=3600)
+    response.set_cookie(key="session_id", value=new_session_id, httponly=True, max_age=3600)
     return response
 
 @router.post("/webhook")

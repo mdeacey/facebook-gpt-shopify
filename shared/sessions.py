@@ -6,7 +6,9 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import base64
-from typing import Optional
+from typing import Optional, Tuple
+import uuid
+from fastapi import HTTPException
 
 def get_fernet_key() -> Fernet:
     secret = os.getenv("STATE_TOKEN_SECRET").encode()
@@ -43,11 +45,9 @@ class SessionStorage:
             raise Exception(f"Session database initialization failed: {str(e)}")
 
     def generate_session_id(self) -> str:
-        """Generate a unique session ID."""
         return secrets.token_urlsafe(32)
 
     def store_uuid(self, session_id: str, uuid: str) -> None:
-        """Store UUID in the session database."""
         encrypted_uuid = self.fernet.encrypt(uuid.encode()).decode()
         created_at = int(time.time())
         for _ in range(3):
@@ -68,7 +68,6 @@ class SessionStorage:
         raise Exception("Session database write failed after retries")
 
     def get_uuid(self, session_id: str) -> Optional[str]:
-        """Retrieve UUID from the session database."""
         try:
             with sqlite3.connect(self.db_path, timeout=10) as conn:
                 cursor = conn.cursor()
@@ -81,7 +80,6 @@ class SessionStorage:
             raise Exception(f"Session database read failed: {str(e)}")
 
     def clear_session(self, session_id: str) -> None:
-        """Remove session ID from the database."""
         try:
             with sqlite3.connect(self.db_path, timeout=10) as conn:
                 cursor = conn.cursor()
@@ -89,3 +87,32 @@ class SessionStorage:
                 conn.commit()
         except sqlite3.OperationalError as e:
             raise Exception(f"Session database delete failed: {str(e)}")
+
+    def get_or_create_session(self, session_id: Optional[str]) -> Tuple[str, str]:
+        user_uuid = None
+        if session_id:
+            user_uuid = self.get_uuid(session_id)
+
+        if user_uuid:
+            self.clear_session(session_id)
+            new_session_id = self.generate_session_id()
+            self.store_uuid(new_session_id, user_uuid)
+        else:
+            new_session_id = self.generate_session_id()
+            user_uuid = str(uuid.uuid4())
+            self.store_uuid(new_session_id, user_uuid)
+
+        return new_session_id, user_uuid
+
+    def verify_session(self, session_id: Optional[str], expected_uuid: Optional[str] = None) -> str:
+        if not session_id:
+            raise HTTPException(status_code=400, detail="Missing session_id cookie")
+
+        user_uuid = self.get_uuid(session_id)
+        if not user_uuid:
+            raise HTTPException(status_code=400, detail="Invalid or expired session")
+
+        if expected_uuid and user_uuid != expected_uuid:
+            raise HTTPException(status_code=400, detail="Mismatched session UUID")
+
+        return user_uuid

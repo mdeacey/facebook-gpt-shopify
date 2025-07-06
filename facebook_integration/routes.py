@@ -32,11 +32,7 @@ async def start_oauth(request: Request):
         raise HTTPException(status_code=500, detail="Invalid FACEBOOK_APP_ID format")
 
     session_id = request.cookies.get("session_id")
-    if not session_id:
-        raise HTTPException(status_code=400, detail="Missing session_id cookie")
-    user_uuid = session_storage.get_uuid(session_id)
-    if not user_uuid:
-        raise HTTPException(status_code=400, detail="Invalid or expired session")
+    new_session_id, user_uuid = session_storage.get_or_create_session(session_id)
 
     state = generate_state_token(extra_data=user_uuid)
 
@@ -44,7 +40,9 @@ async def start_oauth(request: Request):
         f"https://www.facebook.com/v19.0/dialog/oauth?"
         f"client_id={client_id}&redirect_uri={redirect_uri}&scope={scope}&response_type=code&state={state}"
     )
-    return RedirectResponse(auth_url)
+    response = RedirectResponse(auth_url)
+    response.set_cookie(key="session_id", value=new_session_id, httponly=True, max_age=3600)
+    return response
 
 @router.get("/callback")
 async def oauth_callback(request: Request):
@@ -61,8 +59,9 @@ async def oauth_callback(request: Request):
         raise HTTPException(status_code=400, detail="Invalid UUID in state token")
 
     session_id = request.cookies.get("session_id")
-    if session_id:
-        session_storage.clear_session(session_id)
+    session_storage.verify_session(session_id, expected_uuid=user_uuid)
+
+    new_session_id, user_uuid = session_storage.get_or_create_session(session_id)
 
     token_data = await exchange_code_for_token(code)
     if "access_token" not in token_data:
@@ -187,13 +186,15 @@ async def oauth_callback(request: Request):
         "paging": pages.get("paging", {})
     }
 
-    return JSONResponse(content={
+    response = JSONResponse(content={
         "user_uuid": user_uuid,
         "pages": safe_pages,
         "webhook_test": webhook_test_results,
         "polling_test": polling_test_results,
         "upload_status": upload_status_results
     })
+    response.set_cookie(key="session_id", value=new_session_id, httponly=True, max_age=3600)
+    return response
 
 @router.post("/webhook")
 async def facebook_webhook(request: Request):
