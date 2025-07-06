@@ -36,7 +36,15 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
     shopify_metadata = shopify_data.get("metadata", {})
     shopify_products = shopify_data.get("products", {})
     facebook_page_data = next((page for page in facebook_data.get("data", []) if page["id"] == page_id), {})
-    conversation_history = [msg for msg in facebook_data.get("conversations", {}).get(sender_id, []) if msg["recipient"]["id"] == page_id]
+    conversation_history = [
+        msg for msg in facebook_data.get("conversations", {}).get(sender_id, [])
+        if msg.get("recipient", {}).get("id") == page_id
+    ]
+
+    if not facebook_page_data:
+        print(f"No page data found for page_id {page_id} in user {user_uuid}")
+    if not conversation_history:
+        print(f"No conversation history found for sender {sender_id} on page {page_id}")
 
     try:
         with open("digitalocean_integration/prompt.txt", "r") as f:
