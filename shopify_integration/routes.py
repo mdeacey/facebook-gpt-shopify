@@ -30,9 +30,9 @@ async def start_oauth(request: Request, shop_name: str):
         shop_name = f"{shop_name}.myshopify.com"
 
     session_id = request.cookies.get("session_id")
-    new_session_id, _ = session_storage.get_or_create_session(session_id)
+    new_session_id, user_uuid = session_storage.get_or_create_session(session_id)
 
-    state = generate_state_token()
+    state = generate_state_token(extra_data=user_uuid)
 
     auth_url = (
         f"https://{shop_name}/admin/oauth/authorize?"
@@ -51,10 +51,12 @@ async def oauth_callback(request: Request):
     if not code or not shop or not state:
         raise HTTPException(status_code=400, detail="Missing code, shop, or state parameter")
 
-    validate_state_token(state)
+    user_uuid = validate_state_token(state)
+    if not user_uuid:
+        raise HTTPException(status_code=400, detail="Invalid UUID in state token")
 
     session_id = request.cookies.get("session_id")
-    user_uuid = session_storage.verify_session(session_id)
+    session_storage.verify_session(session_id, expected_uuid=user_uuid)
 
     new_session_id, user_uuid = session_storage.get_or_create_session(session_id)
 
@@ -149,7 +151,7 @@ async def shopify_webhook(request: Request):
     print(f"Received {event_type} event from {shop}: {payload}")
 
     try:
-        shopify_data = await get_shopify_data(access_token, shop)
+        data = await get_shopify_data(access_token, shop)
         session = boto3.session.Session()
         s3_client = session.client(
             "s3",
@@ -159,8 +161,8 @@ async def shopify_webhook(request: Request):
             aws_secret_access_key=os.getenv("SPACES_API_SECRET")
         )
         spaces_key = f"users/{user_uuid}/shopify/data.json"
-        if has_data_changed(shopify_data, spaces_key, s3_client):
-            upload_to_spaces(shopify_data, spaces_key, s3_client)
+        if has_data_changed(data, spaces_key, s3_client):
+            upload_to_spaces(data, spaces_key, s3_client)
             print(f"Updated data in Spaces for {shop} via {event_type}")
     except Exception as e:
         print(f"Failed to update Spaces for {shop} via {event_type}: {str(e)}")

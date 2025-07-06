@@ -28,9 +28,9 @@ async def start_oauth(request: Request):
         raise HTTPException(status_code=500, detail="Facebook app config missing")
 
     session_id = request.cookies.get("session_id")
-    new_session_id, _ = session_storage.get_or_create_session(session_id)
+    new_session_id, user_uuid = session_storage.get_or_create_session(session_id)
 
-    state = generate_state_token()
+    state = generate_state_token(extra_data=user_uuid)
 
     auth_url = (
         f"https://www.facebook.com/v19.0/dialog/oauth?"
