@@ -15,7 +15,7 @@ async def get_data_from_spaces(key: str, s3_client: boto3.client) -> dict:
         return json.loads(response["Body"].read().decode())
     except ClientError as e:
         if e.response["Error"]["Code"] == "NoSuchKey":
-            return []
+            return {}
         raise HTTPException(status_code=500, detail=f"Failed to fetch data from Spaces: {str(e)}")
 
 async def generate_agent_response(page_id: str, sender_id: str, message_text: str, user_uuid: str) -> dict:
@@ -27,15 +27,16 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
         aws_secret_access_key=os.getenv("SPACES_API_SECRET")
     )
 
-    shopify_metadata_key = f"users/{user_uuid}/shopify/shop_metadata.json"
-    shopify_products_key = f"users/{user_uuid}/shopify/shop_products.json"
-    facebook_metadata_key = f"users/{user_uuid}/facebook/{page_id}/page_metadata.json"
-    conversation_key = f"users/{user_uuid}/facebook/{page_id}/conversations/{sender_id}.json"
+    shopify_data_key = f"users/{user_uuid}/shopify/data.json"
+    facebook_data_key = f"users/{user_uuid}/facebook/data.json"
 
-    shopify_metadata = await get_data_from_spaces(shopify_metadata_key, s3_client)
-    shopify_products = await get_data_from_spaces(shopify_products_key, s3_client)
-    facebook_metadata = await get_data_from_spaces(facebook_metadata_key, s3_client)
-    conversation_history = await get_data_from_spaces(conversation_key, s3_client)
+    shopify_data = await get_data_from_spaces(shopify_data_key, s3_client)
+    facebook_data = await get_data_from_spaces(facebook_data_key, s3_client)
+
+    shopify_metadata = shopify_data.get("metadata", {})
+    shopify_products = shopify_data.get("products", {})
+    facebook_page_data = next((page for page in facebook_data.get("data", []) if page["id"] == page_id), {})
+    conversation_history = [msg for msg in facebook_data.get("conversations", {}).get(sender_id, []) if msg["recipient"]["id"] == page_id]
 
     try:
         with open("digitalocean_integration/prompt.txt", "r") as f:
@@ -47,7 +48,7 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
         message_text=message_text,
         shopify_metadata=json.dumps(shopify_metadata, indent=2),
         shopify_products=json.dumps(shopify_products, indent=2),
-        facebook_metadata=json.dumps(facebook_metadata, indent=2),
+        facebook_metadata=json.dumps(facebook_page_data, indent=2),
         conversation_history=json.dumps(conversation_history, indent=2)
     )
 

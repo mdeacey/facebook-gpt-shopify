@@ -1,18 +1,17 @@
 import os
-import re
 import json
-import hmac
-import hashlib
 import boto3
 import time
+import hmac
+import hashlib
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions, poll_facebook_data, poll_facebook_conversations
+from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions
 from shared.utils import generate_state_token, validate_state_token
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
-from digitalocean_integration.agent import generate_agent_response, send_facebook_message
+from digitalocean_integration.agent import generate_agent_response, send_facebook_message, get_data_from_spaces
 import httpx
 
 router = APIRouter()
@@ -28,13 +27,10 @@ async def start_oauth(request: Request):
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Facebook app config missing")
 
-    if not re.match(r'^\d{15,20}$', client_id):
-        raise HTTPException(status_code=500, detail="Invalid FACEBOOK_APP_ID format")
-
     session_id = request.cookies.get("session_id")
-    new_session_id, user_uuid = session_storage.get_or_create_session(session_id)
+    new_session_id, _ = session_storage.get_or_create_session(session_id)
 
-    state = generate_state_token(extra_data=user_uuid)
+    state = generate_state_token()
 
     auth_url = (
         f"https://www.facebook.com/v19.0/dialog/oauth?"
@@ -69,8 +65,6 @@ async def oauth_callback(request: Request):
 
     token_storage.store_token("FACEBOOK_USER_ACCESS_TOKEN", token_data["access_token"], type="token")
 
-    pages = await get_facebook_data(token_data["access_token"])
-
     session = boto3.session.Session()
     s3_client = session.client(
         "s3",
@@ -80,10 +74,11 @@ async def oauth_callback(request: Request):
         aws_secret_access_key=os.getenv("SPACES_API_SECRET")
     )
 
+    data = await get_facebook_data(token_data["access_token"], user_uuid, s3_client)
+
     webhook_test_results = []
-    polling_test_results = []
     upload_status_results = []
-    for page in pages.get("data", []):
+    for page in data.get("data", []):
         page_id = page["id"]
         token_storage.store_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}", page["access_token"], type="token")
         token_storage.store_token(f"PAGE_UUID_{page_id}", user_uuid, type="uuid")
@@ -93,11 +88,6 @@ async def oauth_callback(request: Request):
             await register_webhooks(page_id, page["access_token"])
         else:
             print(f"Webhook subscription for 'name,category,messages' already exists for page {page_id}")
-
-        spaces_key = f"users/{user_uuid}/facebook/{page_id}/page_metadata.json"
-        if has_data_changed(pages, spaces_key, s3_client):
-            upload_to_spaces(pages, spaces_key, s3_client)
-            print(f"Uploaded metadata to Spaces for page {page_id}")
 
         test_metadata_payload = {
             "object": "page",
@@ -126,7 +116,7 @@ async def oauth_callback(request: Request):
                         {
                             "sender": {"id": "test_user_id"},
                             "recipient": {"id": page_id},
-                            "timestamp": 1697051234567,
+                            "timestamp": int(time.time() * 1000),
                             "message": {"mid": "test_mid", "text": "Test message"}
                         }
                     ]
@@ -146,51 +136,23 @@ async def oauth_callback(request: Request):
             webhook_test_results.append({"page_id": page_id, "type": "messages", "result": webhook_test_result})
             print(f"Message webhook test result for page {page_id}: {webhook_test_result}")
 
-        metadata_result = await poll_facebook_data(page_id)
-        polling_test_results.append({"page_id": page_id, "type": "metadata", "result": metadata_result})
-        print(f"Metadata polling test result for page {page_id}: {metadata_result}")
-        conv_result = await poll_facebook_conversations(page["access_token"], page_id)
-        polling_test_results.append({"page_id": page_id, "type": "conversations", "result": conv_result})
-        print(f"Conversation polling test result for page {page_id}: {conv_result}")
-
         upload_status_result = {"status": "failed", "message": "Tests failed"}
-        if (webhook_test_results[-2]["result"].get("status") == "success" and
-            webhook_test_results[-1]["result"].get("status") == "success" and
-            metadata_result.get("status") == "success" and
-            conv_result.get("status") == "success"):
-            try:
-                metadata_key = f"users/{user_uuid}/facebook/{page_id}/page_metadata.json"
-                response = s3_client.head_object(Bucket=os.getenv("SPACES_BUCKET"), Key=metadata_key)
-                if response["ResponseMetadata"]["HTTPStatusCode"] == 200:
-                    conversation_key = f"users/{user_uuid}/facebook/{page_id}/conversations/test_user_id.json"
-                    response = s3_client.head_object(Bucket=os.getenv("SPACES_BUCKET"), Key=conversation_key)
-                    if response["ResponseMetadata"]["HTTPStatusCode"] == 200:
-                        upload_status_result = {"status": "success"}
-                        print(f"Upload status verified for page {page_id}: Success")
-                    else:
-                        upload_status_result = {"status": "failed", "message": "Conversation upload not found"}
-                        print(f"Conversation upload not found for page {page_id}")
-                else:
-                    upload_status_result = {"status": "failed", "message": "Metadata upload not found"}
-                    print(f"Metadata upload not found for page {page_id}")
-            except Exception as e:
-                upload_status_result = {"status": "failed", "message": f"Upload verification failed: {str(e)}"}
-                print(f"Upload verification failed for page {page_id}: {str(e)}")
+        try:
+            spaces_key = f"users/{user_uuid}/facebook/data.json"
+            if has_data_changed(data, spaces_key, s3_client):
+                upload_to_spaces(data, spaces_key, s3_client)
+                print(f"Uploaded data to Spaces for page {page_id}")
+            upload_status_result = {"status": "success"}
+            print(f"Upload status verified for page {page_id}: Success")
+        except Exception as e:
+            upload_status_result = {"status": "failed", "message": f"Upload verification failed: {str(e)}"}
+            print(f"Upload verification failed for page {page_id}: {str(e)}")
         upload_status_results.append({"page_id": page_id, "result": upload_status_result})
-
-    safe_pages = {
-        "data": [
-            {k: v for k, v in page.items() if k != "access_token"}
-            for page in pages.get("data", [])
-        ],
-        "paging": pages.get("paging", {})
-    }
 
     response = JSONResponse(content={
         "user_uuid": user_uuid,
-        "pages": safe_pages,
+        "data": data,
         "webhook_test": webhook_test_results,
-        "polling_test": polling_test_results,
         "upload_status": upload_status_results
     })
     response.set_cookie(key="session_id", value=new_session_id, httponly=True, max_age=3600)
@@ -231,6 +193,9 @@ async def facebook_webhook(request: Request):
 
         print(f"Received webhook event for page {page_id}: {entry}")
 
+        spaces_key = f"users/{user_uuid}/facebook/data.json"
+        existing_data = await get_data_from_spaces(spaces_key, s3_client) or {"data": [], "paging": {}, "conversations": {}}
+
         if "messaging" in entry:
             for message_event in entry.get("messaging", []):
                 sender_id = message_event.get("sender", {}).get("id")
@@ -242,21 +207,10 @@ async def facebook_webhook(request: Request):
                 if not message_text:
                     continue
 
-                spaces_key = f"users/{user_uuid}/facebook/{page_id}/conversations/{sender_id}.json"
-                conversation = []
-                is_new_conversation = False
-                try:
-                    response = s3_client.get_object(Bucket=os.getenv("SPACES_BUCKET"), Key=spaces_key)
-                    conversation = json.loads(response["Body"].read().decode())
-                    print(f"Continuing conversation for sender {sender_id} on page {page_id}")
-                except s3_client.exceptions.NoSuchKey:
-                    is_new_conversation = True
-                    print(f"New conversation started for sender {sender_id} on page {page_id}")
-
-                conversation.append(message_event)
-                if has_data_changed(conversation, spaces_key, s3_client):
-                    upload_to_spaces(conversation, spaces_key, s3_client)
-                    print(f"Uploaded conversation payload to Spaces: {spaces_key} (new: {is_new_conversation})")
+                existing_data["conversations"].setdefault(sender_id, [])
+                if not any(msg["message"]["mid"] == message_event["message"]["mid"] for msg in existing_data["conversations"][sender_id]):
+                    existing_data["conversations"][sender_id].append(message_event)
+                    print(f"Added message to conversations for sender {sender_id} on page {page_id}")
 
                 try:
                     agent_response = await generate_agent_response(page_id, sender_id, message_text, user_uuid)
@@ -269,22 +223,23 @@ async def facebook_webhook(request: Request):
                         "timestamp": int(time.time() * 1000),
                         "message": {"mid": sent_message_id, "text": response_text}
                     }
-                    conversation.append(agent_payload)
-                    if has_data_changed(conversation, spaces_key, s3_client):
-                        upload_to_spaces(conversation, spaces_key, s3_client)
-                        print(f"Uploaded AI response to Spaces: {spaces_key}")
+                    existing_data["conversations"][sender_id].append(agent_payload)
+                    print(f"Added AI response to conversations for sender {sender_id} on page {page_id}")
                 except Exception as e:
                     print(f"Failed to generate or send AI response for sender {sender_id} on page {page_id}: {str(e)}")
 
         if "changes" in entry:
             try:
-                page_data = await get_facebook_data(access_token)
-                spaces_key = f"users/{user_uuid}/facebook/{page_id}/page_metadata.json"
-                if has_data_changed(page_data, spaces_key, s3_client):
-                    upload_to_spaces(page_data, spaces_key, s3_client)
-                    print(f"Uploaded metadata to Spaces for page {page_id}")
+                updated_data = await get_facebook_data(access_token, user_uuid, s3_client)
+                existing_data["data"] = updated_data["data"]
+                existing_data["paging"] = updated_data["paging"]
+                print(f"Updated page data for page {page_id}")
             except Exception as e:
-                print(f"Failed to upload metadata for page {page_id}: {str(e)}")
+                print(f"Failed to update page data for page {page_id}: {str(e)}")
+
+        if has_data_changed(existing_data, spaces_key, s3_client):
+            upload_to_spaces(existing_data, spaces_key, s3_client)
+            print(f"Uploaded data to Spaces: {spaces_key}")
 
     return {"status": "success"}
 

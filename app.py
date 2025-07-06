@@ -9,8 +9,8 @@ from shopify_integration.routes import router as shopify_oauth_router
 from starlette.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from shopify_integration.utils import daily_poll as shopify_daily_poll
 from facebook_integration.utils import daily_poll as facebook_daily_poll
+from shopify_integration.utils import daily_poll as shopify_daily_poll
 import atexit
 
 required_env_vars = [

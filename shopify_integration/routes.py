@@ -1,16 +1,16 @@
 import os
 import json
 import boto3
-from fastapi import APIRouter, HTTPException, Request
+import hmac
+import hashlib
+import base64
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
-from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks, poll_shopify_data
+from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks
 from shared.utils import generate_state_token, validate_state_token
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
-import hmac
-import hashlib
-import base64
 import httpx
 
 router = APIRouter()
@@ -18,7 +18,7 @@ token_storage = TokenStorage()
 session_storage = SessionStorage()
 
 @router.get("/{shop_name}/login")
-async def start_oauth(shop_name: str):
+async def start_oauth(request: Request, shop_name: str):
     client_id = os.getenv("SHOPIFY_API_KEY")
     redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
     scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_products,write_inventory"
@@ -29,13 +29,18 @@ async def start_oauth(shop_name: str):
     if not shop_name.endswith(".myshopify.com"):
         shop_name = f"{shop_name}.myshopify.com"
 
+    session_id = request.cookies.get("session_id")
+    new_session_id, _ = session_storage.get_or_create_session(session_id)
+
     state = generate_state_token()
 
     auth_url = (
         f"https://{shop_name}/admin/oauth/authorize?"
         f"client_id={client_id}&scope={scope}&redirect_uri={redirect_uri}&response_type=code&state={state}"
     )
-    return RedirectResponse(auth_url)
+    response = RedirectResponse(auth_url)
+    response.set_cookie(key="session_id", value=new_session_id, httponly=True, max_age=3600)
+    return response
 
 @router.get("/callback")
 async def oauth_callback(request: Request):
@@ -90,42 +95,32 @@ async def oauth_callback(request: Request):
         webhook_test_result = {"status": "failed", "message": f"Webhook setup failed: {str(e)}"}
         print(f"Webhook setup failed for {shop}: {str(e)}")
 
-    shopify_data = await get_shopify_data(token_data["access_token"], shop)
+    data = await get_shopify_data(token_data["access_token"], shop)
 
-    access_token = token_storage.get_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}")
-    polling_test_result = await poll_shopify_data(access_token, shop)
-    print(f"Polling test result for {shop}: {polling_test_result}")
+    session = boto3.session.Session()
+    s3_client = session.client(
+        "s3",
+        region_name=os.getenv("SPACES_REGION", "nyc3"),
+        endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
+        aws_access_key_id=os.getenv("SPACES_API_KEY"),
+        aws_secret_access_key=os.getenv("SPACES_API_SECRET")
+    )
 
     upload_status_result = {"status": "failed", "message": "Tests failed"}
-    if webhook_test_result.get("status") == "success" and polling_test_result.get("status") == "success":
-        try:
-            session = boto3.session.Session()
-            s3_client = session.client(
-                "s3",
-                region_name=os.getenv("SPACES_REGION", "nyc3"),
-                endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-                aws_access_key_id=os.getenv("SPACES_API_KEY"),
-                aws_secret_access_key=os.getenv("SPACES_API_SECRET")
-            )
-            metadata_key = f"users/{user_uuid}/shopify/shop_metadata.json"
-            products_key = f"users/{user_uuid}/shopify/shop_products.json"
-            if has_data_changed(shopify_data["metadata"], metadata_key, s3_client):
-                upload_to_spaces(shopify_data["metadata"], metadata_key, s3_client)
-                print(f"Uploaded metadata to Spaces for {shop}")
-            if has_data_changed(shopify_data["products"], products_key, s3_client):
-                upload_to_spaces(shopify_data["products"], products_key, s3_client)
-                print(f"Uploaded products to Spaces for {shop}")
-            upload_status_result = {"status": "success"}
-        except Exception as e:
-            upload_status_result = {"status": "failed", "message": f"Spaces upload failed: {str(e)}"}
-            print(f"Failed to upload to Spaces for {shop}: {str(e)}")
+    try:
+        spaces_key = f"users/{user_uuid}/shopify/data.json"
+        if has_data_changed(data, spaces_key, s3_client):
+            upload_to_spaces(data, spaces_key, s3_client)
+            print(f"Uploaded data to Spaces for {shop}")
+        upload_status_result = {"status": "success"}
+    except Exception as e:
+        upload_status_result = {"status": "failed", "message": f"Spaces upload failed: {str(e)}"}
+        print(f"Failed to upload to Spaces for {shop}: {str(e)}")
 
     response = JSONResponse(content={
         "user_uuid": user_uuid,
-        "token_data": token_data,
-        "shopify_data": shopify_data,
+        "data": data,
         "webhook_test": webhook_test_result,
-        "polling_test": polling_test_result,
         "upload_status": upload_status_result
     })
     response.set_cookie(key="session_id", value=new_session_id, httponly=True, max_age=3600)
@@ -163,14 +158,10 @@ async def shopify_webhook(request: Request):
             aws_access_key_id=os.getenv("SPACES_API_KEY"),
             aws_secret_access_key=os.getenv("SPACES_API_SECRET")
         )
-        metadata_key = f"users/{user_uuid}/shopify/shop_metadata.json"
-        products_key = f"users/{user_uuid}/shopify/shop_products.json"
-        if has_data_changed(shopify_data["metadata"], metadata_key, s3_client):
-            upload_to_spaces(shopify_data["metadata"], metadata_key, s3_client)
-            print(f"Updated metadata in Spaces for {shop} via {event_type}")
-        if has_data_changed(shopify_data["products"], products_key, s3_client):
-            upload_to_spaces(shopify_data["products"], products_key, s3_client)
-            print(f"Updated products in Spaces for {shop} via {event_type}")
+        spaces_key = f"users/{user_uuid}/shopify/data.json"
+        if has_data_changed(shopify_data, spaces_key, s3_client):
+            upload_to_spaces(shopify_data, spaces_key, s3_client)
+            print(f"Updated data in Spaces for {shop} via {event_type}")
     except Exception as e:
         print(f"Failed to update Spaces for {shop} via {event_type}: {str(e)}")
 

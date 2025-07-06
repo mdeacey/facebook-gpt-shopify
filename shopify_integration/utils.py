@@ -1,13 +1,13 @@
 import os
 import httpx
 import asyncio
+import hmac
 import hashlib
 import base64
-import hmac
-from fastapi import HTTPException, Request
 import boto3
-from digitalocean_integration.utils import has_data_changed, upload_to_spaces
+from fastapi import HTTPException, Request
 from shared.tokens import TokenStorage
+from digitalocean_integration.utils import has_data_changed, upload_to_spaces
 
 token_storage = TokenStorage()
 
@@ -122,7 +122,6 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
     for attempt in range(retries):
         try:
             async with httpx.AsyncClient() as client:
-
                 response = await client.post(url, headers=headers, json={"query": metadata_query})
                 response.raise_for_status()
                 metadata_data = response.json()
@@ -208,55 +207,34 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
         else:
             print(f"Failed to register webhook for {topic} at {shop}: {response.text}")
 
-async def poll_shopify_data(access_token: str, shop: str) -> dict:
-    try:
-        shop_key = shop.replace('.', '_')
-        user_uuid = token_storage.get_token(f"USER_UUID_{shop_key}")
-        if not user_uuid:
-            raise HTTPException(status_code=500, detail=f"User UUID not found for shop {shop}")
-        shopify_data = await get_shopify_data(access_token, shop)
-        session = boto3.session.Session()
-        s3_client = session.client(
-            "s3",
-            region_name=os.getenv("SPACES_REGION", "nyc3"),
-            endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-            aws_access_key_id=os.getenv("SPACES_API_KEY"),
-            aws_secret_access_key=os.getenv("SPACES_API_SECRET")
-        )
-
-        metadata_key = f"users/{user_uuid}/shopify/shop_metadata.json"
-        if has_data_changed(shopify_data["metadata"], metadata_key, s3_client):
-            upload_to_spaces(shopify_data["metadata"], metadata_key, s3_client)
-            print(f"Polled and uploaded metadata for {shop}: Success")
-        else:
-            print(f"Polled metadata for {shop}: No upload needed, data unchanged")
-
-        products_key = f"users/{user_uuid}/shopify/shop_products.json"
-        if has_data_changed(shopify_data["products"], products_key, s3_client):
-            upload_to_spaces(shopify_data["products"], products_key, s3_client)
-            print(f"Polled and uploaded products for {shop}: Success")
-        else:
-            print(f"Polled products for {shop}: No upload needed, data unchanged")
-        return {"status": "success"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
 async def daily_poll():
     shops = [
         key.replace("SHOPIFY_ACCESS_TOKEN_", "").replace("_", ".")
         for key in token_storage.get_all_tokens_by_type("token")
         if key.startswith("SHOPIFY_ACCESS_TOKEN_")
     ]
-
     for shop in shops:
         try:
             shop_key = shop.replace('.', '_')
             access_token = token_storage.get_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}")
-            if access_token:
-                poll_result = await poll_shopify_data(access_token, shop)
-                if poll_result["status"] == "success":
-                    print(f"Polled data for {shop}: Success")
-                else:
-                    print(f"Polling failed for {shop}: {poll_result['message']}")
+            user_uuid = token_storage.get_token(f"USER_UUID_{shop_key}")
+            if not access_token or not user_uuid:
+                print(f"Missing access token or user UUID for shop {shop}")
+                continue
+            shopify_data = await get_shopify_data(access_token, shop)
+            session = boto3.session.Session()
+            s3_client = session.client(
+                "s3",
+                region_name=os.getenv("SPACES_REGION", "nyc3"),
+                endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
+                aws_access_key_id=os.getenv("SPACES_API_KEY"),
+                aws_secret_access_key=os.getenv("SPACES_API_SECRET")
+            )
+            spaces_key = f"users/{user_uuid}/shopify/data.json"
+            if has_data_changed(shopify_data, spaces_key, s3_client):
+                upload_to_spaces(shopify_data, spaces_key, s3_client)
+                print(f"Polled and uploaded data for {shop}: Success")
+            else:
+                print(f"Polled data for {shop}: No upload needed, data unchanged")
         except Exception as e:
             print(f"Daily poll failed for {shop}: {str(e)}")
