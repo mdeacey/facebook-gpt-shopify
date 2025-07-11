@@ -155,6 +155,10 @@ async def oauth_callback(request: Request):
             webhook_test_results.append(result)
             print(f"Metadata webhook test result for page {page_id}: {result}")
 
+            admin_user_id = os.getenv("FACEBOOK_ADMIN_USER_ID")
+            if not admin_user_id:
+                raise HTTPException(status_code=500, detail="FACEBOOK_ADMIN_USER_ID not set in .env")
+
             test_message_payload = {
                 "object": "page",
                 "entry": [
@@ -162,7 +166,7 @@ async def oauth_callback(request: Request):
                         "id": page_id,
                         "messaging": [
                             {
-                                "sender": {"id": "123456789012345"},
+                                "sender": {"id": admin_user_id},
                                 "recipient": {"id": page_id},
                                 "timestamp": int(time.time() * 1000),
                                 "message": {"mid": "test_mid", "text": "Test message"}
