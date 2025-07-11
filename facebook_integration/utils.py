@@ -141,3 +141,19 @@ async def daily_poll():
                 print(f"Polled data for page {page_id}: No upload needed, data unchanged")
         except Exception as e:
             print(f"Daily poll failed for page {page_id}: {str(e)}")
+
+@retry_async
+async def send_facebook_message(page_id: str, recipient_id: str, message_text: str, access_token: str) -> str:
+    print(f"Sending Facebook message to recipient {recipient_id} on page {page_id}")
+    url = f"https://graph.facebook.com/v19.0/{page_id}/messages"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {"text": message_text}
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, headers=headers, json=payload)
+        print(f"Facebook API response: {response.status_code}, {response.text}")
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Message send failed: {response.text}")
+        return response.json().get("message_id", f"sent_mid_{int(time.time())}")
