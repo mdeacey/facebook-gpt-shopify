@@ -6,9 +6,47 @@ import base64
 import secrets
 import json
 import boto3
+import httpx
 from fastapi import HTTPException
+from typing import Optional, Literal
 
 STATE_TOKEN_SECRET = os.getenv("STATE_TOKEN_SECRET", "changeme-in-prod")
+
+async def check_endpoint_accessibility(
+    endpoint: str,
+    auth_key: Optional[str] = None,
+    endpoint_type: Literal["api", "webhook"] = "api",
+    method: Literal["GET", "HEAD", "POST"] = "HEAD",
+    expected_status: Optional[int] = None
+) -> tuple[bool, str]:
+    headers = {"Content-Type": "application/json"}
+    if auth_key:
+        headers["Authorization"] = f"Bearer {auth_key}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            request_method = {
+                "GET": client.get,
+                "HEAD": client.head,
+                "POST": client.post
+            }[method]
+            
+            response = await request_method(endpoint, headers=headers, json={} if method == "POST" else None, timeout=5)
+            
+            if expected_status and response.status_code == expected_status:
+                return True, f"{endpoint_type.capitalize()} endpoint is accessible (status {response.status_code} expected)"
+            if response.status_code == 200:
+                return True, f"{endpoint_type.capitalize()} endpoint is accessible"
+            elif response.status_code == 401:
+                return False, f"{endpoint_type.capitalize()} endpoint returned 401 - authentication may be required or endpoint is restricted"
+            elif response.status_code == 403:
+                return False, f"{endpoint_type.capitalize()} endpoint returned 403 - access may be forbidden or endpoint is restricted"
+            elif response.status_code == 404:
+                return False, f"{endpoint_type.capitalize()} endpoint returned 404 - endpoint may be private or misconfigured"
+            else:
+                return False, f"{endpoint_type.capitalize()} endpoint check failed with status {response.status_code}: {response.text}"
+        except httpx.RequestError as e:
+            return False, f"{endpoint_type.capitalize()} endpoint inaccessible - may be private, restricted, or network issue: {str(e)}"
 
 def compute_data_hash(data: dict) -> str:
     serialized = json.dumps(data, ensure_ascii=False, sort_keys=True)

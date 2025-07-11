@@ -5,12 +5,26 @@ import httpx
 import time
 from fastapi import HTTPException
 from shared.tokens import TokenStorage
+from shared.utils import check_endpoint_accessibility
 from .spaces import get_data_from_spaces
 
 token_storage = TokenStorage()
 
 async def generate_agent_response(page_id: str, sender_id: str, message_text: str, user_uuid: str) -> dict:
     print(f"Generating AI response for page {page_id}, sender {sender_id}, message: {message_text}")
+    
+    endpoint = os.getenv("AGENT_ENDPOINT", "https://et7wtbptiokv4v3rs2ucud4m.agents.do-ai.run/api/v1/")
+    api_key = os.getenv("AGENT_API_KEY")
+    is_accessible, accessibility_message = await check_endpoint_accessibility(
+        endpoint=endpoint,
+        auth_key=api_key,
+        endpoint_type="api",
+        method="HEAD"
+    )
+    if not is_accessible:
+        print(f"GenAI API check failed: {accessibility_message}")
+        raise HTTPException(status_code=500, detail=accessibility_message)
+
     s3_client = boto3.client(
         "s3",
         region_name=os.getenv("SPACES_REGION", "nyc3"),
@@ -54,15 +68,14 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
     )
 
     headers = {
-        "Authorization": f"Bearer {os.getenv('AGENT_API_KEY')}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "n/a",
+        "model": "llama-3.3-70b-instruct",
         "messages": [{"role": "user", "content": prompt}],
         "extra_body": {"include_retrieval_info": True}
     }
-    endpoint = os.getenv("AGENT_ENDPOINT", "https://et7wtbptiokv4v3rs2ucud4m.agents.do-ai.run/api/v1/")
     print(f"Sending request to GenAI API: {endpoint}")
     async with httpx.AsyncClient() as client:
         try:

@@ -7,7 +7,7 @@ import base64
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks
-from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash
+from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
@@ -70,58 +70,76 @@ async def oauth_callback(request: Request):
     token_storage.store_token(f"USER_UUID_{shop_key}", user_uuid, type="uuid")
 
     webhook_test_result = None
-    try:
-        await register_webhooks(shop, token_data["access_token"])
-        test_payload = {"product": {"id": 12345, "title": "Test Product"}}
-        secret = os.getenv("SHOPIFY_API_SECRET")
-        hmac_signature = base64.b64encode(
-            hmac.new(secret.encode(), json.dumps(test_payload).encode(), hashlib.sha256).digest()
-        ).decode()
-        start_time = time.time()
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{os.getenv('SHOPIFY_WEBHOOK_ADDRESS', 'http://localhost:5000/shopify/webhook')}",
-                headers={
-                    "X-Shopify-Topic": "products/update",
-                    "X-Shopify-Shop-Domain": shop,
-                    "X-Shopify-Hmac-Sha256": hmac_signature,
-                    "Content-Type": "application/json"
-                },
-                data=json.dumps(test_payload)
-            )
-        result = {
-            "entity_id": shop,
-            "result": {
-                "status": "success" if response.status_code == 200 else "failed",
-                "message": "Products/update webhook test succeeded" if response.status_code == 200 else "Products/update webhook test failed",
-                "attempt_timestamp": int(time.time() * 1000)
-            }
-        }
-        if start_time:
-            result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
-        if response.status_code != 200:
-            result["result"].update({
-                "http_status_code": response.status_code,
-                "response_body": response.text,
-                "request_payload": json.dumps(test_payload),
-                "server_response_headers": dict(response.headers)
-            })
-        webhook_test_result = result
-        print(f"Webhook test result for {shop}: {webhook_test_result}")
-    except Exception as e:
-        result = {
+
+    webhook_url = os.getenv("SHOPIFY_WEBHOOK_ADDRESS", "http://localhost:5000/shopify/webhook")
+    is_accessible, accessibility_message = await check_endpoint_accessibility(
+        endpoint=webhook_url,
+        endpoint_type="webhook",
+        method="GET"
+    )
+    if not is_accessible:
+        print(f"Shopify webhook endpoint check failed: {accessibility_message}")
+        webhook_test_result = {
             "entity_id": shop,
             "result": {
                 "status": "failed",
-                "message": f"Webhook setup failed: {str(e)}",
+                "message": accessibility_message,
                 "attempt_timestamp": int(time.time() * 1000)
             }
         }
-        result["result"]["error_details"] = str(e)
-        if test_payload:
-            result["result"]["data_size_bytes"] = len(json.dumps(test_payload).encode())
-        webhook_test_result = result
-        print(f"Webhook setup failed for {shop}: {str(e)}")
+    else:
+        try:
+            await register_webhooks(shop, token_data["access_token"])
+            test_payload = {"product": {"id": 12345, "title": "Test Product"}}
+            secret = os.getenv("SHOPIFY_API_SECRET")
+            hmac_signature = base64.b64encode(
+                hmac.new(secret.encode(), json.dumps(test_payload).encode(), hashlib.sha256).digest()
+            ).decode()
+            start_time = time.time()
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    webhook_url,
+                    headers={
+                        "X-Shopify-Topic": "products/update",
+                        "X-Shopify-Shop-Domain": shop,
+                        "X-Shopify-Hmac-Sha256": hmac_signature,
+                        "Content-Type": "application/json"
+                    },
+                    data=json.dumps(test_payload)
+                )
+            result = {
+                "entity_id": shop,
+                "result": {
+                    "status": "success" if response.status_code == 200 else "failed",
+                    "message": "Products/update webhook test succeeded" if response.status_code == 200 else "Products/update webhook test failed",
+                    "attempt_timestamp": int(time.time() * 1000)
+                }
+            }
+            if start_time:
+                result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
+            if response.status_code != 200:
+                result["result"].update({
+                    "http_status_code": response.status_code,
+                    "response_body": response.text,
+                    "request_payload": json.dumps(test_payload),
+                    "server_response_headers": dict(response.headers)
+                })
+            webhook_test_result = result
+            print(f"Webhook test result for {shop}: {webhook_test_result}")
+        except Exception as e:
+            result = {
+                "entity_id": shop,
+                "result": {
+                    "status": "failed",
+                    "message": f"Webhook setup failed: {str(e)}",
+                    "attempt_timestamp": int(time.time() * 1000)
+                }
+            }
+            result["result"]["error_details"] = str(e)
+            if test_payload:
+                result["result"]["data_size_bytes"] = len(json.dumps(test_payload).encode())
+            webhook_test_result = result
+            print(f"Webhook setup failed for {shop}: {str(e)}")
 
     data = await get_shopify_data(token_data["access_token"], shop)
 
