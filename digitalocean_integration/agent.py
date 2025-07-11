@@ -3,20 +3,11 @@ import json
 import boto3
 import httpx
 import time
-from botocore.exceptions import ClientError
 from fastapi import HTTPException
 from shared.tokens import TokenStorage
+from .spaces import get_data_from_spaces
 
 token_storage = TokenStorage()
-
-async def get_data_from_spaces(key: str, s3_client: boto3.client) -> dict:
-    try:
-        response = s3_client.get_object(Bucket=os.getenv("SPACES_BUCKET"), Key=key)
-        return json.loads(response["Body"].read().decode())
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "NoSuchKey":
-            return {}
-        raise HTTPException(status_code=500, detail=f"Failed to fetch data from Spaces: {str(e)}")
 
 async def generate_agent_response(page_id: str, sender_id: str, message_text: str, user_uuid: str) -> dict:
     print(f"Generating AI response for page {page_id}, sender {sender_id}, message: {message_text}")

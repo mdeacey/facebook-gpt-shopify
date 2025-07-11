@@ -7,7 +7,7 @@ import base64
 import boto3
 from fastapi import HTTPException, Request
 from shared.tokens import TokenStorage
-from digitalocean_integration.utils import has_data_changed, upload_to_spaces
+from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
 
 token_storage = TokenStorage()
 

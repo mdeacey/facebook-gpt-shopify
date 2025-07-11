@@ -1,9 +1,18 @@
 import os
-import boto3
 import json
-from fastapi import HTTPException
+import boto3
 from botocore.exceptions import ClientError
+from fastapi import HTTPException
 from shared.utils import compute_data_hash
+
+async def get_data_from_spaces(key: str, s3_client: boto3.client) -> dict:
+    try:
+        response = s3_client.get_object(Bucket=os.getenv("SPACES_BUCKET"), Key=key)
+        return json.loads(response["Body"].read().decode())
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "NoSuchKey":
+            return {}
+        raise HTTPException(status_code=500, detail=f"Failed to fetch data from Spaces: {str(e)}")
 
 def has_data_changed(data: dict, key: str, s3_client: boto3.client) -> bool:
     new_hash = compute_data_hash(data)

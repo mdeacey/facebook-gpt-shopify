@@ -10,8 +10,8 @@ from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, r
 from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
-from digitalocean_integration.utils import has_data_changed, upload_to_spaces
-from digitalocean_integration.agent import generate_agent_response, send_facebook_message, get_data_from_spaces
+from digitalocean_integration.spaces import has_data_changed, upload_to_spaces, get_data_from_spaces
+from digitalocean_integration.agent import generate_agent_response, send_facebook_message
 import httpx
 
 router = APIRouter()
