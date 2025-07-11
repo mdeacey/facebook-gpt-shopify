@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from typing import Optional, Literal, Callable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+# Create a module-level logger
 logger = logging.getLogger(__name__)
 
 STATE_TOKEN_SECRET = os.getenv("STATE_TOKEN_SECRET", "changeme-in-prod")
@@ -56,13 +57,13 @@ async def check_endpoint_accessibility(
             response = await make_request(client, endpoint, headers, method)
             logger.info(f"Received response from {endpoint}: status {response.status_code}")
             if expected_status and response.status_code == expected_status:
-                return True, f"{endpoint_type.capitalize()} endpoint is accessible (status {response.status_code} expected)"
+                return True, f"{endpoint_type.capitalize()} endpoint is accessible as expected (status {response.status_code})"
             if response.status_code == 200:
                 return True, f"{endpoint_type.capitalize()} endpoint is accessible"
             elif response.status_code == 401:
                 return False, f"{endpoint_type.capitalize()} endpoint returned 401 - authentication may be required or endpoint is restricted"
             elif response.status_code == 403:
-                return False, f"{endpoint_type.capitalize()} endpoint returned 403 - access may be forbidden or endpoint is restricted"
+                return False, f"{endpoint_type.capitalize()} endpoint access forbidden or restricted"
             elif response.status_code == 404:
                 return False, f"{endpoint_type.capitalize()} endpoint returned 404 - endpoint may be private or misconfigured"
             else:
