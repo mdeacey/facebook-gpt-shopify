@@ -71,7 +71,7 @@ async def oauth_callback(request: Request):
 
     webhook_test_result = None
 
-    webhook_url = os.getenv("SHOPIFY_WEBHOOK_ADDRESS", "http://localhost:5000/shopify/webhook")
+    webhook_url = os.getenv("SHOPIFY_WEBHOOK_ADDRESS")
     is_accessible, accessibility_message = await check_endpoint_accessibility(
         endpoint=webhook_url,
         endpoint_type="webhook",

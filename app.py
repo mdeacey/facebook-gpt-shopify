@@ -29,7 +29,7 @@ app = FastAPI(title="Facebook and Shopify OAuth with FastAPI")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://<codespace-name>-5000.app.github.dev"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

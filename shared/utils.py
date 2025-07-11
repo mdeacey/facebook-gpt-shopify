@@ -42,14 +42,16 @@ async def check_endpoint_accessibility(
             "HEAD": client.head,
             "POST": client.post
         }[method]
-        kwargs = {"headers": headers, "timeout": 5}
+        kwargs = {"headers": headers, "timeout": 10}
         if method == "POST":
             kwargs["json"] = {}
+        print(f"Sending {method} request to {endpoint} with headers {headers}")
         return await request_method(endpoint, **kwargs)
 
     async with httpx.AsyncClient() as client:
         try:
             response = await make_request(client, endpoint, headers, method)
+            print(f"Received response from {endpoint}: status {response.status_code}")
             if expected_status and response.status_code == expected_status:
                 return True, f"{endpoint_type.capitalize()} endpoint is accessible (status {response.status_code} expected)"
             if response.status_code == 200:
@@ -63,6 +65,7 @@ async def check_endpoint_accessibility(
             else:
                 return False, f"{endpoint_type.capitalize()} endpoint check failed with status {response.status_code}: {response.text}"
         except Exception as e:
+            print(f"Failed to access {endpoint}: {str(e)}")
             return False, f"{endpoint_type.capitalize()} endpoint inaccessible - may be private, restricted, or network issue: {str(e)}"
 
 def compute_data_hash(data: dict) -> str:
