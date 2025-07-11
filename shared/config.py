@@ -21,6 +21,5 @@ class Config:
     state_token_secret = env.str("STATE_TOKEN_SECRET")
     agent_api_key = env.str("AGENT_API_KEY")
     agent_endpoint = env.str("AGENT_ENDPOINT")
-    skip_webhook_check = env.str("SKIP_WEBHOOK_CHECK")
 
 config = Config()

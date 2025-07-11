@@ -81,30 +81,19 @@ async def oauth_callback(request: Request):
     upload_status_results = []
 
     webhook_url = config.facebook_webhook_address
-    if config.skip_webhook_check.lower() != "true":
-        is_accessible, accessibility_message = await check_endpoint_accessibility(
-            endpoint=webhook_url,
-            endpoint_type="webhook",
-            method="GET",
-            expected_status=403
-        )
-        if not is_accessible:
-            print(f"Webhook endpoint check failed: {accessibility_message}")
-            webhook_test_results.append({
-                "entity_id": "all",
-                "result": {
-                    "status": "failed",
-                    "message": accessibility_message,
-                    "attempt_timestamp": int(time.time() * 1000)
-                }
-            })
-    else:
-        print("Skipping webhook accessibility check due to SKIP_WEBHOOK_CHECK=true")
+    is_accessible, accessibility_message = await check_endpoint_accessibility(
+        endpoint=webhook_url,
+        endpoint_type="webhook",
+        method="GET",
+        expected_status=403
+    )
+    if not is_accessible:
+        print(f"Webhook endpoint check failed: {accessibility_message}")
         webhook_test_results.append({
             "entity_id": "all",
             "result": {
-                "status": "skipped",
-                "message": "Webhook accessibility check disabled",
+                "status": "failed",
+                "message": accessibility_message,
                 "attempt_timestamp": int(time.time() * 1000)
             }
         })
