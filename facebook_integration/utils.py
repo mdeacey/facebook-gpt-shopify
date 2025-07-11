@@ -3,6 +3,7 @@ import httpx
 import hmac
 import hashlib
 import boto3
+import time
 from datetime import datetime
 from fastapi import HTTPException, Request
 from shared.tokens import TokenStorage
@@ -144,6 +145,8 @@ async def daily_poll():
 
 @retry_async
 async def send_facebook_message(page_id: str, recipient_id: str, message_text: str, access_token: str) -> str:
+    if not recipient_id.isdigit():
+        raise HTTPException(status_code=400, detail="Invalid recipient ID: must be a numeric string")
     print(f"Sending Facebook message to recipient {recipient_id} on page {page_id}")
     url = f"https://graph.facebook.com/v19.0/{page_id}/messages"
     headers = {"Authorization": f"Bearer {access_token}"}

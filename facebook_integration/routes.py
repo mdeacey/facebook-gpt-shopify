@@ -162,7 +162,7 @@ async def oauth_callback(request: Request):
                         "id": page_id,
                         "messaging": [
                             {
-                                "sender": {"id": "test_user_id"},
+                                "sender": {"id": "123456789012345"},
                                 "recipient": {"id": page_id},
                                 "timestamp": int(time.time() * 1000),
                                 "message": {"mid": "test_mid", "text": "Test message"}
