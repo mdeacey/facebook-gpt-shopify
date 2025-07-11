@@ -120,6 +120,7 @@ async def oauth_callback(request: Request):
             print(f"Webhook subscription for 'name,category,messages,messaging_postbacks,message_echoes' already exists for page {page_id}")
 
         async with httpx.AsyncClient() as client:
+
             test_metadata_payload = {
                 "object": "page",
                 "entry": [{"id": page_id, "changes": [{"field": "name", "value": "Test Page"}]}]
@@ -154,56 +155,6 @@ async def oauth_callback(request: Request):
                 })
             webhook_test_results.append(result)
             print(f"Metadata webhook test result for page {page_id}: {result}")
-
-            admin_user_id = os.getenv("FACEBOOK_ADMIN_USER_ID")
-            if not admin_user_id:
-                raise HTTPException(status_code=500, detail="FACEBOOK_ADMIN_USER_ID not set in .env")
-
-            test_message_payload = {
-                "object": "page",
-                "entry": [
-                    {
-                        "id": page_id,
-                        "messaging": [
-                            {
-                                "sender": {"id": admin_user_id},
-                                "recipient": {"id": page_id},
-                                "timestamp": int(time.time() * 1000),
-                                "message": {"mid": "test_mid", "text": "Test message"}
-                            }
-                        ]
-                    }
-                ]
-            }
-            hmac_signature = f"sha1={hmac.new(secret.encode(), json.dumps(test_message_payload).encode(), hashlib.sha1).hexdigest()}"
-            print(f"Sending message webhook test to {webhook_url} with payload {json.dumps(test_message_payload)}")
-            start_time = time.time()
-            response = await client.post(
-                webhook_url,
-                headers={"X-Hub-Signature": hmac_signature, "Content-Type": "application/json"},
-                data=json.dumps(test_message_payload),
-                timeout=10
-            )
-            print(f"Message webhook test response: status {response.status_code}, body {response.text}")
-            result = {
-                "entity_id": page_id,
-                "result": {
-                    "status": "success" if response.status_code == 200 else "failed",
-                    "message": "Message webhook test succeeded" if response.status_code == 200 else "Message webhook test failed",
-                    "attempt_timestamp": int(time.time() * 1000)
-                }
-            }
-            if start_time:
-                result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
-            if response.status_code != 200:
-                result["result"].update({
-                    "http_status_code": response.status_code,
-                    "response_body": response.text,
-                    "request_payload": json.dumps(test_message_payload),
-                    "server_response_headers": dict(response.headers)
-                })
-            webhook_test_results.append(result)
-            print(f"Message webhook test result for page {page_id}: {result}")
 
         start_time = time.time()
         has_changed = has_data_changed(data, f"users/{user_uuid}/facebook/data.json", s3_client)
