@@ -5,3 +5,6 @@ boto3
 httpx
 apscheduler
 cryptography
+environs
+openai
+msgspec

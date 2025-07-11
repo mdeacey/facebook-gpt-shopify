@@ -1,8 +1,3 @@
-from dotenv import load_dotenv
-
-load_dotenv()
-
-import os
 from fastapi import FastAPI
 from facebook_integration.routes import router as facebook_oauth_router
 from shopify_integration.routes import router as shopify_oauth_router
@@ -12,18 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 from facebook_integration.utils import daily_poll as facebook_daily_poll
 from shopify_integration.utils import daily_poll as shopify_daily_poll
 import atexit
-
-required_env_vars = [
-    "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "FACEBOOK_REDIRECT_URI",
-    "FACEBOOK_WEBHOOK_ADDRESS", "FACEBOOK_VERIFY_TOKEN",
-    "SHOPIFY_API_KEY", "SHOPIFY_API_SECRET", "SHOPIFY_REDIRECT_URI",
-    "SHOPIFY_WEBHOOK_ADDRESS", "SPACES_API_KEY", "SPACES_API_SECRET",
-    "SPACES_BUCKET", "SPACES_REGION", "STATE_TOKEN_SECRET",
-    "AGENT_API_KEY", "AGENT_ENDPOINT"
-]
-missing_vars = [var for var in required_env_vars if not os.getenv(var)]
-if missing_vars:
-    raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+from shared.config import config
 
 app = FastAPI(title="Facebook and Shopify OAuth with FastAPI")
 

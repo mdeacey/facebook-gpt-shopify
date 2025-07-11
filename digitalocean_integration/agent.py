@@ -1,23 +1,26 @@
 import os
 import json
 import boto3
-import httpx
 import time
 from fastapi import HTTPException
+from openai import AsyncOpenAI
 from shared.tokens import TokenStorage
-from shared.utils import check_endpoint_accessibility, retry_async
+from shared.utils import check_endpoint_accessibility
+from shared.config import config
 from .spaces import get_data_from_spaces
-from facebook_integration.utils import send_facebook_message
 
 token_storage = TokenStorage()
+client = AsyncOpenAI(
+    api_key=config.agent_api_key,
+    base_url=config.agent_endpoint.rstrip("/") + "/api/v1"
+)
 
 async def generate_agent_response(page_id: str, sender_id: str, message_text: str, user_uuid: str) -> dict:
     print(f"Generating AI response for page {page_id}, sender {sender_id}, message: {message_text}")
     
-    base_endpoint = os.getenv("AGENT_ENDPOINT", "https://et7wtbptiokv4v3rs2ucud4m.agents.do-ai.run/")
+    base_endpoint = config.agent_endpoint
     health_endpoint = base_endpoint.rstrip("/") + "/health"
-    chat_endpoint = base_endpoint.rstrip("/") + "/api/v1/chat/completions"
-    api_key = os.getenv("AGENT_API_KEY")
+    api_key = config.agent_api_key
     
     if not base_endpoint.startswith("https://"):
         raise HTTPException(status_code=500, detail="Invalid AGENT_ENDPOINT format")
@@ -36,10 +39,10 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
 
     s3_client = boto3.client(
         "s3",
-        region_name=os.getenv("SPACES_REGION", "nyc3"),
-        endpoint_url=os.getenv("SPACES_ENDPOINT", "https://nyc3.digitaloceanspaces.com"),
-        aws_access_key_id=os.getenv("SPACES_API_KEY"),
-        aws_secret_access_key=os.getenv("SPACES_API_SECRET")
+        region_name=config.spaces_region,
+        endpoint_url=config.spaces_endpoint,
+        aws_access_key_id=config.spaces_api_key,
+        aws_secret_access_key=config.spaces_api_secret
     )
 
     shopify_data_key = f"users/{user_uuid}/shopify/data.json"
@@ -75,37 +78,19 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
         conversation_history=json.dumps(conversation_history, indent=2)
     )
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "llama-3.3-70b-instruct",
-        "messages": [{"role": "user", "content": prompt}],
-        "include_retrieval_info": True,
-        "temperature": 0.7,
-        "max_tokens": 100,
-        "retrieval_method": "rewrite",
-        "k": 5
-    }
-    print(f"Sending request to GenAI API: {chat_endpoint}")
-
-    @retry_async
-    async def make_genai_request(client, endpoint, headers, payload):
-        return await client.post(endpoint, headers=headers, json=payload)
-
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await make_genai_request(client, chat_endpoint, headers, payload)
-            print(f"GenAI API response: {response.status_code}, {response.text}")
-            response_data = response.json()
-            choices = response_data.get("choices", [{}])
-            if not choices or not choices[0].get("message", {}).get("content"):
-                raise HTTPException(status_code=500, detail="GenAI API returned no valid response")
-            return {
-                "text": choices[0]["message"]["content"].strip(),
-                "message_id": f"agent_mid_{int(time.time())}"
-            }
-        except Exception as e:
-            print(f"GenAI API request failed: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"GenAI API request failed: {str(e)}")
+    try:
+        response = await client.chat.completions.create(
+            model="llama-3.3-70b-instruct",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=100,
+            extra_body={"include_retrieval_info": True, "retrieval_method": "rewrite", "k": 5}
+        )
+        print(f"GenAI API response: {response.choices[0].message.content}")
+        return {
+            "text": response.choices[0].message.content.strip(),
+            "message_id": f"agent_mid_{int(time.time())}"
+        }
+    except Exception as e:
+        print(f"GenAI API request failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"GenAI API request failed: {str(e)}")

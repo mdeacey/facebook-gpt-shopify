@@ -1,4 +1,3 @@
-import os
 import json
 import boto3
 import hmac
@@ -10,8 +9,10 @@ from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, regis
 from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
+from shared.config import config
+from shared.models import ShopifyWebhookPayload
 from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
-import httpx
+from msgspec.json import decode
 import time
 
 router = APIRouter()
@@ -20,8 +21,8 @@ session_storage = SessionStorage()
 
 @router.get("/{shop_name}/login")
 async def start_oauth(request: Request, shop_name: str):
-    client_id = os.getenv("SHOPIFY_API_KEY")
-    redirect_uri = os.getenv("SHOPIFY_REDIRECT_URI")
+    client_id = config.shopify_api_key
+    redirect_uri = config.shopify_redirect_uri
     scope = "read_product_listings,read_inventory,read_discounts,read_locations,read_products,write_products,write_inventory"
 
     if not client_id or not redirect_uri:
@@ -71,7 +72,7 @@ async def oauth_callback(request: Request):
 
     webhook_test_result = None
 
-    webhook_url = os.getenv("SHOPIFY_WEBHOOK_ADDRESS")
+    webhook_url = config.shopify_webhook_address
     is_accessible, accessibility_message = await check_endpoint_accessibility(
         endpoint=webhook_url,
         endpoint_type="webhook",
@@ -91,7 +92,7 @@ async def oauth_callback(request: Request):
         try:
             await register_webhooks(shop, token_data["access_token"])
             test_payload = {"product": {"id": 12345, "title": "Test Product"}}
-            secret = os.getenv("SHOPIFY_API_SECRET")
+            secret = config.shopify_api_secret
             hmac_signature = base64.b64encode(
                 hmac.new(secret.encode(), json.dumps(test_payload).encode(), hashlib.sha256).digest()
             ).decode()
@@ -146,10 +147,10 @@ async def oauth_callback(request: Request):
     session = boto3.session.Session()
     s3_client = session.client(
         "s3",
-        region_name=os.getenv("SPACES_REGION", "nyc3"),
-        endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-        aws_access_key_id=os.getenv("SPACES_API_KEY"),
-        aws_secret_access_key=os.getenv("SPACES_API_SECRET")
+        region_name=config.spaces_region,
+        endpoint_url=config.spaces_endpoint,
+        aws_access_key_id=config.spaces_api_key,
+        aws_secret_access_key=config.spaces_api_secret
     )
 
     start_time = time.time()
@@ -164,7 +165,7 @@ async def oauth_callback(request: Request):
     }
     if start_time:
         result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
-    previous_hash = get_previous_hash(s3_client, os.getenv("SPACES_BUCKET"), f"users/{user_uuid}/shopify/data.json")
+    previous_hash = get_previous_hash(s3_client, config.spaces_bucket, f"users/{user_uuid}/shopify/data.json")
     if previous_hash:
         result["result"]["previous_hash"] = previous_hash
     if has_changed:
@@ -206,6 +207,8 @@ async def shopify_webhook(request: Request):
     if not shop:
         raise HTTPException(status_code=400, detail="Missing shop domain")
 
+    payload = decode(await request.body(), type=ShopifyWebhookPayload)
+
     shop_key = shop.replace('.', '_')
     access_token = token_storage.get_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}")
     if not access_token:
@@ -215,19 +218,18 @@ async def shopify_webhook(request: Request):
     if not user_uuid:
         raise HTTPException(status_code=500, detail="User UUID not found for shop")
 
-    payload = await request.json()
     event_type = request.headers.get("X-Shopify-Topic")
-    print(f"Received {event_type} event from {shop}: {payload}")
+    print(f"Received {event_type} event from {shop}: {payload.__dict__}")
 
     try:
         data = await get_shopify_data(access_token, shop)
         session = boto3.session.Session()
         s3_client = session.client(
             "s3",
-            region_name=os.getenv("SPACES_REGION", "nyc3"),
-            endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-            aws_access_key_id=os.getenv("SPACES_API_KEY"),
-            aws_secret_access_key=os.getenv("SPACES_API_SECRET")
+            region_name=config.spaces_region,
+            endpoint_url=config.spaces_endpoint,
+            aws_access_key_id=config.spaces_api_key,
+            aws_secret_access_key=config.spaces_api_secret
         )
         spaces_key = f"users/{user_uuid}/shopify/data.json"
         if has_data_changed(data, spaces_key, s3_client):

@@ -1,4 +1,3 @@
-import os
 import json
 import boto3
 import time
@@ -10,9 +9,11 @@ from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, r
 from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
+from shared.config import config
+from shared.models import FacebookWebhookPayload
 from digitalocean_integration.spaces import has_data_changed, upload_to_spaces, get_data_from_spaces
 from digitalocean_integration.agent import generate_agent_response
-import httpx
+from msgspec.json import decode
 
 router = APIRouter()
 token_storage = TokenStorage()
@@ -20,8 +21,8 @@ session_storage = SessionStorage()
 
 @router.get("/login")
 async def start_oauth(request: Request):
-    client_id = os.getenv("FACEBOOK_APP_ID")
-    redirect_uri = os.getenv("FACEBOOK_REDIRECT_URI")
+    client_id = config.facebook_app_id
+    redirect_uri = config.facebook_redirect_uri
     scope = "pages_messaging,pages_show_list,pages_manage_metadata"
 
     if not client_id or not redirect_uri:
@@ -68,10 +69,10 @@ async def oauth_callback(request: Request):
     session = boto3.session.Session()
     s3_client = session.client(
         "s3",
-        region_name=os.getenv("SPACES_REGION"),
-        endpoint_url=os.getenv("SPACES_ENDPOINT"),
-        aws_access_key_id=os.getenv("SPACES_API_KEY"),
-        aws_secret_access_key=os.getenv("SPACES_API_SECRET")
+        region_name=config.spaces_region,
+        endpoint_url=config.spaces_endpoint,
+        aws_access_key_id=config.spaces_api_key,
+        aws_secret_access_key=config.spaces_api_secret
     )
 
     data = await get_facebook_data(token_data["access_token"], user_uuid, s3_client)
@@ -79,8 +80,8 @@ async def oauth_callback(request: Request):
     webhook_test_results = []
     upload_status_results = []
 
-    webhook_url = os.getenv("FACEBOOK_WEBHOOK_ADDRESS")
-    if os.getenv("SKIP_WEBHOOK_CHECK", "false").lower() != "true":
+    webhook_url = config.facebook_webhook_address
+    if config.skip_webhook_check.lower() != "true":
         is_accessible, accessibility_message = await check_endpoint_accessibility(
             endpoint=webhook_url,
             endpoint_type="webhook",
@@ -119,42 +120,40 @@ async def oauth_callback(request: Request):
         else:
             print(f"Webhook subscription for 'name,category,messages,messaging_postbacks,message_echoes' already exists for page {page_id}")
 
-        async with httpx.AsyncClient() as client:
-
-            test_metadata_payload = {
-                "object": "page",
-                "entry": [{"id": page_id, "changes": [{"field": "name", "value": "Test Page"}]}]
+        test_metadata_payload = {
+            "object": "page",
+            "entry": [{"id": page_id, "changes": [{"field": "name", "value": "Test Page"}]}]
+        }
+        secret = config.facebook_app_secret
+        hmac_signature = f"sha1={hmac.new(secret.encode(), json.dumps(test_metadata_payload).encode(), hashlib.sha1).hexdigest()}"
+        print(f"Sending metadata webhook test to {webhook_url} with payload {json.dumps(test_metadata_payload)}")
+        start_time = time.time()
+        response = await client.post(
+            webhook_url,
+            headers={"X-Hub-Signature": hmac_signature, "Content-Type": "application/json"},
+            data=json.dumps(test_metadata_payload),
+            timeout=10
+        )
+        print(f"Metadata webhook test response: status {response.status_code}, body {response.text}")
+        result = {
+            "entity_id": page_id,
+            "result": {
+                "status": "success" if response.status_code == 200 else "failed",
+                "message": "Metadata webhook test succeeded" if response.status_code == 200 else "Metadata webhook test failed",
+                "attempt_timestamp": int(time.time() * 1000)
             }
-            secret = os.getenv("FACEBOOK_APP_SECRET")
-            hmac_signature = f"sha1={hmac.new(secret.encode(), json.dumps(test_metadata_payload).encode(), hashlib.sha1).hexdigest()}"
-            print(f"Sending metadata webhook test to {webhook_url} with payload {json.dumps(test_metadata_payload)}")
-            start_time = time.time()
-            response = await client.post(
-                webhook_url,
-                headers={"X-Hub-Signature": hmac_signature, "Content-Type": "application/json"},
-                data=json.dumps(test_metadata_payload),
-                timeout=10
-            )
-            print(f"Metadata webhook test response: status {response.status_code}, body {response.text}")
-            result = {
-                "entity_id": page_id,
-                "result": {
-                    "status": "success" if response.status_code == 200 else "failed",
-                    "message": "Metadata webhook test succeeded" if response.status_code == 200 else "Metadata webhook test failed",
-                    "attempt_timestamp": int(time.time() * 1000)
-                }
-            }
-            if start_time:
-                result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
-            if response.status_code != 200:
-                result["result"].update({
-                    "http_status_code": response.status_code,
-                    "response_body": response.text,
-                    "request_payload": json.dumps(test_metadata_payload),
-                    "server_response_headers": dict(response.headers)
-                })
-            webhook_test_results.append(result)
-            print(f"Metadata webhook test result for page {page_id}: {result}")
+        }
+        if start_time:
+            result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
+        if response.status_code != 200:
+            result["result"].update({
+                "http_status_code": response.status_code,
+                "response_body": response.text,
+                "request_payload": json.dumps(test_metadata_payload),
+                "server_response_headers": dict(response.headers)
+            })
+        webhook_test_results.append(result)
+        print(f"Metadata webhook test result for page {page_id}: {result}")
 
         start_time = time.time()
         has_changed = has_data_changed(data, f"users/{user_uuid}/facebook/data.json", s3_client)
@@ -168,7 +167,7 @@ async def oauth_callback(request: Request):
         }
         if start_time:
             result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
-        previous_hash = get_previous_hash(s3_client, os.getenv("SPACES_BUCKET"), f"users/{user_uuid}/facebook/data.json")
+        previous_hash = get_previous_hash(s3_client, config.spaces_bucket, f"users/{user_uuid}/facebook/data.json")
         if previous_hash:
             result["result"]["previous_hash"] = previous_hash
         if has_changed:
@@ -208,20 +207,20 @@ async def facebook_webhook(request: Request):
         print("Invalid HMAC signature")
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
 
-    payload = await request.json()
-    if payload.get("object") != "page":
+    payload = decode(await request.body(), type=FacebookWebhookPayload)
+    if payload.object != "page":
         raise HTTPException(status_code=400, detail="Invalid webhook object")
 
     session = boto3.session.Session()
     s3_client = session.client(
         "s3",
-        region_name=os.getenv("SPACES_REGION", "nyc3"),
-        endpoint_url=os.getenv("SPACES_ENDPOINT", "https://nyc3.digitaloceanspaces.com"),
-        aws_access_key_id=os.getenv("SPACES_API_KEY"),
-        aws_secret_access_key=os.getenv("SPACES_API_SECRET")
+        region_name=config.spaces_region,
+        endpoint_url=config.spaces_endpoint,
+        aws_access_key_id=config.spaces_api_key,
+        aws_secret_access_key=config.spaces_api_secret
     )
 
-    for entry in payload.get("entry", []):
+    for entry in payload.entry:
         page_id = entry.get("id")
         if not page_id:
             continue
@@ -298,6 +297,6 @@ async def verify_webhook_subscription(request: Request):
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
     print(f"Mode: {mode}, Token: {token}, Challenge: {challenge}")
-    if mode == "subscribe" and token == os.getenv("FACEBOOK_VERIFY_TOKEN", "default_verify_token"):
+    if mode == "subscribe" and token == config.facebook_verify_token:
         return PlainTextResponse(challenge)
     raise HTTPException(status_code=403, detail="Verification failed")
