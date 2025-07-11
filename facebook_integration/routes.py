@@ -7,7 +7,7 @@ import hashlib
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions
-from shared.utils import generate_state_token, validate_state_token, compute_data_hash
+from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
@@ -87,7 +87,7 @@ async def oauth_callback(request: Request):
         if not any("name" in sub.get("subscribed_fields", []) for sub in existing_subscriptions):
             await register_webhooks(page_id, page["access_token"])
         else:
-            print(f"Webhook subscription for 'name,category,messages' already exists for page {page_id}")
+            print(f"Webhook subscription for 'name,category,messages,messaging_postbacks,message_echoes' already exists for page {page_id}")
 
         async with httpx.AsyncClient() as client:
             test_metadata_payload = {
@@ -177,6 +177,9 @@ async def oauth_callback(request: Request):
         }
         if start_time:
             result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
+        previous_hash = get_previous_hash(s3_client, os.getenv("SPACES_BUCKET"), f"users/{user_uuid}/facebook/data.json")
+        if previous_hash:
+            result["result"]["previous_hash"] = previous_hash
         if has_changed:
             try:
                 upload_to_spaces(data, f"users/{user_uuid}/facebook/data.json", s3_client)
