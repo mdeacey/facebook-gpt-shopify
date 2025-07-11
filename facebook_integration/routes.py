@@ -5,7 +5,7 @@ import time
 import hmac
 import hashlib
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions
 from shared.utils import generate_state_token, validate_state_token
 from shared.sessions import SessionStorage
@@ -248,7 +248,7 @@ async def verify_webhook_subscription(request: Request):
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
-
+    print(f"Mode: {mode}, Token: {token}, Challenge: {challenge}")
     if mode == "subscribe" and token == os.getenv("FACEBOOK_VERIFY_TOKEN", "default_verify_token"):
-        return challenge
+        return PlainTextResponse(challenge)
     raise HTTPException(status_code=403, detail="Verification failed")

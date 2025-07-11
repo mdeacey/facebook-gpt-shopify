@@ -19,6 +19,7 @@ async def get_data_from_spaces(key: str, s3_client: boto3.client) -> dict:
         raise HTTPException(status_code=500, detail=f"Failed to fetch data from Spaces: {str(e)}")
 
 async def generate_agent_response(page_id: str, sender_id: str, message_text: str, user_uuid: str) -> dict:
+    print(f"Generating AI response for page {page_id}, sender {sender_id}, message: {message_text}")
     s3_client = boto3.client(
         "s3",
         region_name=os.getenv("SPACES_REGION", "nyc3"),
@@ -50,6 +51,7 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
         with open("digitalocean_integration/prompt.txt", "r") as f:
             prompt_template = f.read()
     except FileNotFoundError:
+        print("Prompt file not found at digitalocean_integration/prompt.txt")
         raise HTTPException(status_code=500, detail="Prompt file not found")
 
     prompt = prompt_template.format(
@@ -69,20 +71,28 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
         "prompt": prompt,
         "max_tokens": 200
     }
+    endpoint = os.getenv("AGENT_ENDPOINT", "https://et7wtbptiokv4v3rs2ucud4m.agents.do-ai.run")
+    print(f"Sending request to GenAI API: {endpoint}")
     async with httpx.AsyncClient() as client:
-        response = await client.post(
-            os.getenv("GENAI_ENDPOINT", "https://api.genai.digitalocean.com/v1/llama3.3-70b-instruct"),
-            headers=headers,
-            json=payload
-        )
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail=f"GenAI API error: {response.text}")
-        return {
-            "text": response.json().get("choices", [{}])[0].get("text", "").strip(),
-            "message_id": f"agent_mid_{int(time.time())}"
-        }
+        try:
+            response = await client.post(
+                endpoint,
+                headers=headers,
+                json=payload
+            )
+            print(f"GenAI API response: {response.status_code}, {response.text}")
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail=f"GenAI API error: {response.text}")
+            return {
+                "text": response.json().get("choices", [{}])[0].get("text", "").strip(),
+                "message_id": f"agent_mid_{int(time.time())}"
+            }
+        except Exception as e:
+            print(f"GenAI API request failed: {str(e)}")
+            raise
 
 async def send_facebook_message(page_id: str, recipient_id: str, message_text: str, access_token: str) -> str:
+    print(f"Sending Facebook message to recipient {recipient_id} on page {page_id}")
     url = f"https://graph.facebook.com/v19.0/{page_id}/messages"
     headers = {"Authorization": f"Bearer {access_token}"}
     payload = {
@@ -94,4 +104,5 @@ async def send_facebook_message(page_id: str, recipient_id: str, message_text: s
         if response.status_code != 200:
             print(f"Failed to send message to {recipient_id} on page {page_id}: {response.text}")
             raise HTTPException(status_code=500, detail=f"Message send failed: {response.text}")
+        print(f"Message sent successfully: {response.json()}")
         return response.json().get("message_id", f"sent_mid_{int(time.time())}")
