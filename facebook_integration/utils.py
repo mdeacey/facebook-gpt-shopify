@@ -89,14 +89,14 @@ async def register_webhooks(page_id: str, access_token: str):
     url = f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps"
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
-        "subscribed_fields": "name,category,messages",
+        "subscribed_fields": "name,category,messages,messaging_postbacks,message_echoes",
         "callback_url": webhook_address,
         "verify_token": os.getenv("FACEBOOK_VERIFY_TOKEN", "default_verify_token")
     }
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, params=params)
         if response.status_code == 200:
-            print(f"Webhook registered for page {page_id} with fields: name,category,messages")
+            print(f"Webhook registered for page {page_id} with fields: name,category,messages,messaging_postbacks,message_echoes")
         else:
             print(f"Failed to register webhook for page {page_id}: {response.text}")
             raise HTTPException(status_code=500, detail=f"Failed to register webhook: {response.text}")
