@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from shared.logging import setup_logging
 from facebook_integration.routes import router as facebook_oauth_router
 from shopify_integration.routes import router as shopify_oauth_router
 from starlette.middleware.cors import CORSMiddleware
@@ -7,7 +8,9 @@ from apscheduler.triggers.cron import CronTrigger
 from facebook_integration.utils import daily_poll as facebook_daily_poll
 from shopify_integration.utils import daily_poll as shopify_daily_poll
 import atexit
-from shared.config import config
+import logging
+
+setup_logging(log_level=logging.INFO, log_file="app.log")
 
 app = FastAPI(title="Facebook and Shopify OAuth with FastAPI")
 

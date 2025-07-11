@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import hmac
@@ -11,6 +12,8 @@ from fastapi import HTTPException
 from typing import Optional, Literal, Callable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+logger = logging.getLogger(__name__)
+
 STATE_TOKEN_SECRET = os.getenv("STATE_TOKEN_SECRET", "changeme-in-prod")
 
 def retry_async(func: Callable) -> Callable:
@@ -18,7 +21,7 @@ def retry_async(func: Callable) -> Callable:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError, boto3.exceptions.Boto3Error)),
-        before_sleep=lambda retry_state: print(
+        before_sleep=lambda retry_state: logger.info(
             f"{func.__name__} failed (attempt {retry_state.attempt_number}/3): {str(retry_state.outcome.exception())}. "
             f"Retrying in {retry_state.next_action.sleep}s..."
         )
@@ -45,13 +48,13 @@ async def check_endpoint_accessibility(
         kwargs = {"headers": headers, "timeout": 10}
         if method == "POST":
             kwargs["json"] = {}
-        print(f"Sending {method} request to {endpoint} with headers {headers}")
+        logger.info(f"Sending {method} request to {endpoint} with headers {headers}")
         return await request_method(endpoint, **kwargs)
 
     async with httpx.AsyncClient() as client:
         try:
             response = await make_request(client, endpoint, headers, method)
-            print(f"Received response from {endpoint}: status {response.status_code}")
+            logger.info(f"Received response from {endpoint}: status {response.status_code}")
             if expected_status and response.status_code == expected_status:
                 return True, f"{endpoint_type.capitalize()} endpoint is accessible (status {response.status_code} expected)"
             if response.status_code == 200:
@@ -65,7 +68,7 @@ async def check_endpoint_accessibility(
             else:
                 return False, f"{endpoint_type.capitalize()} endpoint check failed with status {response.status_code}: {response.text}"
         except Exception as e:
-            print(f"Failed to access {endpoint}: {str(e)}")
+            logger.error(f"Failed to access {endpoint}: {str(e)}")
             return False, f"{endpoint_type.capitalize()} endpoint inaccessible - may be private, restricted, or network issue: {str(e)}"
 
 def compute_data_hash(data: dict) -> str:

@@ -1,3 +1,4 @@
+import logging
 import os
 import httpx
 import asyncio
@@ -9,6 +10,8 @@ from fastapi import HTTPException, Request
 from shared.tokens import TokenStorage
 from shared.utils import retry_async
 from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
+
+logger = logging.getLogger(__name__)
 
 token_storage = TokenStorage()
 
@@ -22,7 +25,7 @@ async def exchange_code_for_token(code: str, shop: str):
     }
     async with httpx.AsyncClient() as client:
         response = await client.post(url, json=data)
-        print(f"Shopify token exchange response for {shop}: {response.status_code}, {response.text}")
+        logger.info(f"Shopify token exchange response for {shop}: {response.status_code}, {response.text}")
         response.raise_for_status()
         return response.json()
 
@@ -143,11 +146,11 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
                     raise HTTPException(status_code=400, detail=f"GraphQL products query failed: {error_message}")
                 products_result = products_data["data"]
 
-                print(f"Shopify data fetched for {shop}")
+                logger.info(f"Shopify data fetched for {shop}")
                 return {"metadata": metadata_result, "products": products_result}
             except httpx.HTTPStatusError as e:
                 if attempt == retries - 1 or e.response.status_code != 429:
-                    print(f"Shopify GraphQL query failed for {shop}: {str(e)}")
+                    logger.error(f"Shopify GraphQL query failed for {shop}: {str(e)}")
                     raise
                 await asyncio.sleep(2 ** attempt)
 
@@ -186,7 +189,7 @@ async def register_webhooks(shop: str, access_token: str):
         if not any(w["topic"] == topic for w in existing_webhooks):
             await register_webhook(shop, access_token, topic, webhook_address)
         else:
-            print(f"Webhook for {topic} already exists for {shop}")
+            logger.info(f"Webhook for {topic} already exists for {shop}")
 
 @retry_async
 async def get_existing_webhooks(shop: str, access_token: str):
@@ -194,7 +197,7 @@ async def get_existing_webhooks(shop: str, access_token: str):
     headers = {"X-Shopify-Access-Token": access_token}
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers)
-        print(f"Shopify webhooks response for {shop}: {response.status_code}, {response.text}")
+        logger.info(f"Shopify webhooks response for {shop}: {response.status_code}, {response.text}")
         return response.json().get("webhooks", [])
 
 @retry_async
@@ -213,10 +216,10 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
     }
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, json=payload)
-        print(f"Shopify webhook registration response for {topic} at {shop}: {response.status_code}, {response.text}")
+        logger.info(f"Shopify webhook registration response for {topic} at {shop}: {response.status_code}, {response.text}")
         if response.status_code != 201:
             raise HTTPException(status_code=500, detail=f"Failed to register webhook: {response.text}")
-        print(f"Webhook registered for {topic} at {shop}")
+        logger.info(f"Webhook registered for {topic} at {shop}")
 
 async def daily_poll():
     shops = [
@@ -230,7 +233,7 @@ async def daily_poll():
             access_token = token_storage.get_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}")
             user_uuid = token_storage.get_token(f"USER_UUID_{shop_key}")
             if not access_token or not user_uuid:
-                print(f"Missing access token or user UUID for shop {shop}")
+                logger.error(f"Missing access token or user UUID for shop {shop}")
                 continue
             shopify_data = await get_shopify_data(access_token, shop)
             session = boto3.session.Session()
@@ -244,8 +247,8 @@ async def daily_poll():
             spaces_key = f"users/{user_uuid}/shopify/data.json"
             if has_data_changed(shopify_data, spaces_key, s3_client):
                 upload_to_spaces(shopify_data, spaces_key, s3_client)
-                print(f"Polled and uploaded data for {shop}: Success")
+                logger.info(f"Polled and uploaded data for {shop}: Success")
             else:
-                print(f"Polled data for {shop}: No upload needed, data unchanged")
+                logger.info(f"Polled data for {shop}: No upload needed, data unchanged")
         except Exception as e:
-            print(f"Daily poll failed for {shop}: {str(e)}")
+            logger.error(f"Daily poll failed for {shop}: {str(e)}")

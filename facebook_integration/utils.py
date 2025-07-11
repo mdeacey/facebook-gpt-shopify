@@ -1,3 +1,4 @@
+import logging
 import os
 import httpx
 import hmac
@@ -9,6 +10,8 @@ from fastapi import HTTPException, Request
 from shared.tokens import TokenStorage
 from shared.utils import retry_async
 from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
+
+logger = logging.getLogger(__name__)
 
 token_storage = TokenStorage()
 
@@ -23,7 +26,7 @@ async def exchange_code_for_token(code: str):
     }
     async with httpx.AsyncClient() as client:
         response = await client.get(url, params=params)
-        print(f"Facebook token exchange response: {response.status_code}, {response.text}")
+        logger.info(f"Facebook token exchange response: {response.status_code}, {response.text}")
         response.raise_for_status()
         return response.json()
 
@@ -36,7 +39,7 @@ async def get_facebook_data(access_token: str, user_uuid: str, s3_client: boto3.
     }
     async with httpx.AsyncClient() as client:
         response = await client.get(url, params=params)
-        print(f"Facebook accounts data response: {response.status_code}, {response.text}")
+        logger.info(f"Facebook accounts data response: {response.status_code}, {response.text}")
         response.raise_for_status()
         pages_data = response.json()
 
@@ -51,7 +54,7 @@ async def get_facebook_data(access_token: str, user_uuid: str, s3_client: boto3.
         async with httpx.AsyncClient() as client:
             response = await client.get(url, params=params)
             if response.status_code != 200:
-                print(f"Failed to fetch conversations for page {page_id}: {response.text}")
+                logger.error(f"Failed to fetch conversations for page {page_id}: {response.text}")
                 continue
             page_conversations = response.json().get("data", [])
             for conversation in page_conversations:
@@ -68,7 +71,7 @@ async def get_facebook_data(access_token: str, user_uuid: str, s3_client: boto3.
                     }
                     if not any(p["message"]["mid"] == message_payload["message"]["mid"] for p in conversations[sender_id]):
                         conversations[sender_id].append(message_payload)
-                print(f"Fetched conversation for sender {sender_id} on page {page_id}")
+                logger.info(f"Fetched conversation for sender {sender_id} on page {page_id}")
 
     data = pages_data.copy()
     data["conversations"] = conversations
@@ -98,10 +101,10 @@ async def register_webhooks(page_id: str, access_token: str):
     }
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, params=params)
-        print(f"Facebook webhook registration response for page {page_id}: {response.status_code}, {response.text}")
+        logger.info(f"Facebook webhook registration response for page {page_id}: {response.status_code}, {response.text}")
         if response.status_code != 200:
             raise HTTPException(status_code=500, detail=f"Failed to register webhook: {response.text}")
-        print(f"Webhook registered for page {page_id} with fields: name,category,messages,messaging_postbacks,message_echoes")
+        logger.info(f"Webhook registered for page {page_id} with fields: name,category,messages,messaging_postbacks,message_echoes")
 
 @retry_async
 async def get_existing_subscriptions(page_id: str, access_token: str):
@@ -109,7 +112,7 @@ async def get_existing_subscriptions(page_id: str, access_token: str):
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers)
-        print(f"Facebook subscriptions response for page {page_id}: {response.status_code}, {response.text}")
+        logger.info(f"Facebook subscriptions response for page {page_id}: {response.status_code}, {response.text}")
         return response.json().get("data", [])
 
 async def daily_poll():
@@ -123,7 +126,7 @@ async def daily_poll():
             access_token = token_storage.get_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}")
             user_uuid = token_storage.get_token(f"PAGE_UUID_{page_id}")
             if not access_token or not user_uuid:
-                print(f"Missing access token or user UUID for page {page_id}")
+                logger.error(f"Missing access token or user UUID for page {page_id}")
                 continue
             session = boto3.session.Session()
             s3_client = session.client(
@@ -137,17 +140,17 @@ async def daily_poll():
             spaces_key = f"users/{user_uuid}/facebook/data.json"
             if has_data_changed(data, spaces_key, s3_client):
                 upload_to_spaces(data, spaces_key, s3_client)
-                print(f"Polled and uploaded data for page {page_id}: Success")
+                logger.info(f"Polled and uploaded data for page {page_id}: Success")
             else:
-                print(f"Polled data for page {page_id}: No upload needed, data unchanged")
+                logger.info(f"Polled data for page {page_id}: No upload needed, data unchanged")
         except Exception as e:
-            print(f"Daily poll failed for page {page_id}: {str(e)}")
+            logger.error(f"Daily poll failed for page {page_id}: {str(e)}")
 
 @retry_async
 async def send_facebook_message(page_id: str, recipient_id: str, message_text: str, access_token: str) -> str:
     if not recipient_id.isdigit():
         raise HTTPException(status_code=400, detail="Invalid recipient ID: must be a numeric string")
-    print(f"Sending Facebook message to recipient {recipient_id} on page {page_id}")
+    logger.info(f"Sending Facebook message to recipient {recipient_id} on page {page_id}")
     url = f"https://graph.facebook.com/v19.0/{page_id}/messages"
     headers = {"Authorization": f"Bearer {access_token}"}
     payload = {
@@ -156,7 +159,7 @@ async def send_facebook_message(page_id: str, recipient_id: str, message_text: s
     }
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, json=payload)
-        print(f"Facebook API response: {response.status_code}, {response.text}")
+        logger.info(f"Facebook API response: {response.status_code}, {response.text}")
         if response.status_code != 200:
             raise HTTPException(status_code=500, detail=f"Message send failed: {response.text}")
         return response.json().get("message_id", f"sent_mid_{int(time.time())}")

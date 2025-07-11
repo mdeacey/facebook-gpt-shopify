@@ -1,3 +1,4 @@
+import logging
 import json
 import boto3
 import hmac
@@ -14,6 +15,8 @@ from shared.models import ShopifyWebhookPayload
 from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
 from msgspec.json import decode
 import time
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 token_storage = TokenStorage()
@@ -79,7 +82,7 @@ async def oauth_callback(request: Request):
         method="GET"
     )
     if not is_accessible:
-        print(f"Shopify webhook endpoint check failed: {accessibility_message}")
+        logger.error(f"Shopify webhook endpoint check failed: {accessibility_message}")
         webhook_test_result = {
             "entity_id": shop,
             "result": {
@@ -126,7 +129,7 @@ async def oauth_callback(request: Request):
                     "server_response_headers": dict(response.headers)
                 })
             webhook_test_result = result
-            print(f"Webhook test result for {shop}: {webhook_test_result}")
+            logger.info(f"Webhook test result for {shop}: {webhook_test_result}")
         except Exception as e:
             result = {
                 "entity_id": shop,
@@ -140,7 +143,7 @@ async def oauth_callback(request: Request):
             if test_payload:
                 result["result"]["data_size_bytes"] = len(json.dumps(test_payload).encode())
             webhook_test_result = result
-            print(f"Webhook setup failed for {shop}: {str(e)}")
+            logger.error(f"Webhook setup failed for {shop}: {str(e)}")
 
     data = await get_shopify_data(token_data["access_token"], shop)
 
@@ -187,7 +190,7 @@ async def oauth_callback(request: Request):
                 "data_size_bytes": len(json.dumps(data).encode()) if data else 0
             })
     upload_status_result = result
-    print(f"Upload status result for {shop}: {upload_status_result}")
+    logger.info(f"Upload status result for {shop}: {upload_status_result}")
 
     response = JSONResponse(content={
         "user_uuid": user_uuid,
@@ -219,7 +222,7 @@ async def shopify_webhook(request: Request):
         raise HTTPException(status_code=500, detail="User UUID not found for shop")
 
     event_type = request.headers.get("X-Shopify-Topic")
-    print(f"Received {event_type} event from {shop}: {payload.__dict__}")
+    logger.info(f"Received {event_type} event from {shop}: {payload.__dict__}")
 
     try:
         data = await get_shopify_data(access_token, shop)
@@ -234,8 +237,8 @@ async def shopify_webhook(request: Request):
         spaces_key = f"users/{user_uuid}/shopify/data.json"
         if has_data_changed(data, spaces_key, s3_client):
             upload_to_spaces(data, spaces_key, s3_client)
-            print(f"Updated data in Spaces for {shop} via {event_type}")
+            logger.info(f"Updated data in Spaces for {shop} via {event_type}")
     except Exception as e:
-        print(f"Failed to update Spaces for {shop} via {event_type}: {str(e)}")
+        logger.error(f"Failed to update Spaces for {shop} via {event_type}: {str(e)}")
 
     return {"status": "success"}

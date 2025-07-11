@@ -1,3 +1,4 @@
+import logging
 import os
 import json
 import boto3
@@ -9,6 +10,8 @@ from shared.utils import check_endpoint_accessibility
 from shared.config import config
 from .spaces import get_data_from_spaces
 
+logger = logging.getLogger(__name__)
+
 token_storage = TokenStorage()
 client = AsyncOpenAI(
     api_key=config.agent_api_key,
@@ -16,15 +19,17 @@ client = AsyncOpenAI(
 )
 
 async def generate_agent_response(page_id: str, sender_id: str, message_text: str, user_uuid: str) -> dict:
-    print(f"Generating AI response for page {page_id}, sender {sender_id}, message: {message_text}")
+    logger.info(f"Generating AI response for page {page_id}, sender {sender_id}, message: {message_text}")
     
     base_endpoint = config.agent_endpoint
     health_endpoint = base_endpoint.rstrip("/") + "/health"
     api_key = config.agent_api_key
     
     if not base_endpoint.startswith("https://"):
+        logger.error("Invalid AGENT_ENDPOINT format")
         raise HTTPException(status_code=500, detail="Invalid AGENT_ENDPOINT format")
     if not api_key:
+        logger.error("AGENT_API_KEY is not set")
         raise HTTPException(status_code=500, detail="AGENT_API_KEY is not set")
 
     is_accessible, accessibility_message = await check_endpoint_accessibility(
@@ -34,7 +39,7 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
         method="GET"
     )
     if not is_accessible:
-        print(f"GenAI API health check failed: {accessibility_message}")
+        logger.error(f"GenAI API health check failed: {accessibility_message}")
         raise HTTPException(status_code=500, detail=accessibility_message)
 
     s3_client = boto3.client(
@@ -59,15 +64,15 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
     ]
 
     if not facebook_page_data:
-        print(f"No page data found for page_id {page_id} in user {user_uuid}")
+        logger.warning(f"No page data found for page_id {page_id} in user {user_uuid}")
     if not conversation_history:
-        print(f"No conversation history found for sender {sender_id} on page {page_id}")
+        logger.info(f"No conversation history found for sender {sender_id} on page {page_id}")
 
     try:
         with open("digitalocean_integration/prompt.txt", "r") as f:
             prompt_template = f.read()
     except FileNotFoundError:
-        print("Prompt file not found at digitalocean_integration/prompt.txt")
+        logger.error("Prompt file not found at digitalocean_integration/prompt.txt")
         raise HTTPException(status_code=500, detail="Prompt file not found")
 
     prompt = prompt_template.format(
@@ -86,11 +91,11 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
             max_tokens=100,
             extra_body={"include_retrieval_info": True, "retrieval_method": "rewrite", "k": 5}
         )
-        print(f"GenAI API response: {response.choices[0].message.content}")
+        logger.info(f"GenAI API response: {response.choices[0].message.content}")
         return {
             "text": response.choices[0].message.content.strip(),
             "message_id": f"agent_mid_{int(time.time())}"
         }
     except Exception as e:
-        print(f"GenAI API request failed: {str(e)}")
+        logger.error(f"GenAI API request failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"GenAI API request failed: {str(e)}")
