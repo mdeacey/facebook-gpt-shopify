@@ -6,10 +6,12 @@ import boto3
 from datetime import datetime
 from fastapi import HTTPException, Request
 from shared.tokens import TokenStorage
+from shared.utils import retry_async
 from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
 
 token_storage = TokenStorage()
 
+@retry_async
 async def exchange_code_for_token(code: str):
     url = "https://graph.facebook.com/v19.0/oauth/access_token"
     params = {
@@ -20,11 +22,11 @@ async def exchange_code_for_token(code: str):
     }
     async with httpx.AsyncClient() as client:
         response = await client.get(url, params=params)
-        if response.status_code != 200:
-            print(f"Facebook API error: {response.status_code} - {response.text}")
-            response.raise_for_status()
+        print(f"Facebook token exchange response: {response.status_code}, {response.text}")
+        response.raise_for_status()
         return response.json()
 
+@retry_async
 async def get_facebook_data(access_token: str, user_uuid: str, s3_client: boto3.client):
     url = "https://graph.facebook.com/v19.0/me/accounts"
     params = {
@@ -33,9 +35,8 @@ async def get_facebook_data(access_token: str, user_uuid: str, s3_client: boto3.
     }
     async with httpx.AsyncClient() as client:
         response = await client.get(url, params=params)
-        if response.status_code != 200:
-            print(f"Facebook API error: {response.status_code} - {response.text}")
-            response.raise_for_status()
+        print(f"Facebook accounts data response: {response.status_code}, {response.text}")
+        response.raise_for_status()
         pages_data = response.json()
 
     conversations = {}
@@ -82,6 +83,7 @@ async def verify_webhook(request: Request) -> bool:
     expected_signature = f"sha1={expected_hmac}"
     return hmac.compare_digest(signature, expected_signature)
 
+@retry_async
 async def register_webhooks(page_id: str, access_token: str):
     webhook_address = os.getenv("FACEBOOK_WEBHOOK_ADDRESS")
     if not webhook_address:
@@ -95,17 +97,18 @@ async def register_webhooks(page_id: str, access_token: str):
     }
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, params=params)
-        if response.status_code == 200:
-            print(f"Webhook registered for page {page_id} with fields: name,category,messages,messaging_postbacks,message_echoes")
-        else:
-            print(f"Failed to register webhook for page {page_id}: {response.text}")
+        print(f"Facebook webhook registration response for page {page_id}: {response.status_code}, {response.text}")
+        if response.status_code != 200:
             raise HTTPException(status_code=500, detail=f"Failed to register webhook: {response.text}")
+        print(f"Webhook registered for page {page_id} with fields: name,category,messages,messaging_postbacks,message_echoes")
 
+@retry_async
 async def get_existing_subscriptions(page_id: str, access_token: str):
     url = f"https://graph.facebook.com/v19.0/{page_id}/subscribed_apps"
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers)
+        print(f"Facebook subscriptions response for page {page_id}: {response.status_code}, {response.text}")
         return response.json().get("data", [])
 
 async def daily_poll():

@@ -5,7 +5,7 @@ import httpx
 import time
 from fastapi import HTTPException
 from shared.tokens import TokenStorage
-from shared.utils import check_endpoint_accessibility
+from shared.utils import check_endpoint_accessibility, retry_async
 from .spaces import get_data_from_spaces
 
 token_storage = TokenStorage()
@@ -13,16 +13,24 @@ token_storage = TokenStorage()
 async def generate_agent_response(page_id: str, sender_id: str, message_text: str, user_uuid: str) -> dict:
     print(f"Generating AI response for page {page_id}, sender {sender_id}, message: {message_text}")
     
-    endpoint = os.getenv("AGENT_ENDPOINT", "https://et7wtbptiokv4v3rs2ucud4m.agents.do-ai.run/api/v1/")
+    base_endpoint = os.getenv("AGENT_ENDPOINT", "https://et7wtbptiokv4v3rs2ucud4m.agents.do-ai.run/api/v1/")
+    health_endpoint = base_endpoint.rstrip("/") + "/health"
+    chat_endpoint = base_endpoint.rstrip("/") + "/chat/completions"
     api_key = os.getenv("AGENT_API_KEY")
+    
+    if not base_endpoint.startswith("https://") or not base_endpoint.endswith("/api/v1/"):
+        raise HTTPException(status_code=500, detail="Invalid AGENT_ENDPOINT format")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="AGENT_API_KEY is not set")
+
     is_accessible, accessibility_message = await check_endpoint_accessibility(
-        endpoint=endpoint,
+        endpoint=health_endpoint,
         auth_key=api_key,
         endpoint_type="api",
-        method="HEAD"
+        method="GET"
     )
     if not is_accessible:
-        print(f"GenAI API check failed: {accessibility_message}")
+        print(f"GenAI API health check failed: {accessibility_message}")
         raise HTTPException(status_code=500, detail=accessibility_message)
 
     s3_client = boto3.client(
@@ -35,7 +43,6 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
 
     shopify_data_key = f"users/{user_uuid}/shopify/data.json"
     facebook_data_key = f"users/{user_uuid}/facebook/data.json"
-
     shopify_data = await get_data_from_spaces(shopify_data_key, s3_client)
     facebook_data = await get_data_from_spaces(facebook_data_key, s3_client)
 
@@ -74,19 +81,22 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
     payload = {
         "model": "llama-3.3-70b-instruct",
         "messages": [{"role": "user", "content": prompt}],
-        "extra_body": {"include_retrieval_info": True}
+        "include_retrieval_info": True,
+        "temperature": 0.7,
+        "max_tokens": 100,
+        "retrieval_method": "rewrite",
+        "k": 5
     }
-    print(f"Sending request to GenAI API: {endpoint}")
+    print(f"Sending request to GenAI API: {chat_endpoint}")
+
+    @retry_async
+    async def make_genai_request(client, endpoint, headers, payload):
+        return await client.post(endpoint, headers=headers, json=payload)
+
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.post(
-                endpoint,
-                headers=headers,
-                json=payload
-            )
+            response = await make_genai_request(client, chat_endpoint, headers, payload)
             print(f"GenAI API response: {response.status_code}, {response.text}")
-            if response.status_code != 200:
-                raise HTTPException(status_code=500, detail=f"GenAI API error: {response.text}")
             response_data = response.json()
             choices = response_data.get("choices", [{}])
             if not choices or not choices[0].get("message", {}).get("content"):
@@ -97,8 +107,9 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
             }
         except Exception as e:
             print(f"GenAI API request failed: {str(e)}")
-            raise
+            raise HTTPException(status_code=500, detail=f"GenAI API request failed: {str(e)}")
 
+@retry_async
 async def send_facebook_message(page_id: str, recipient_id: str, message_text: str, access_token: str) -> str:
     print(f"Sending Facebook message to recipient {recipient_id} on page {page_id}")
     url = f"https://graph.facebook.com/v19.0/{page_id}/messages"
@@ -109,8 +120,7 @@ async def send_facebook_message(page_id: str, recipient_id: str, message_text: s
     }
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, json=payload)
+        print(f"Facebook API response: {response.status_code}, {response.text}")
         if response.status_code != 200:
-            print(f"Failed to send message to {recipient_id} on page {page_id}: {response.text}")
             raise HTTPException(status_code=500, detail=f"Message send failed: {response.text}")
-        print(f"Message sent successfully: {response.json()}")
         return response.json().get("message_id", f"sent_mid_{int(time.time())}")

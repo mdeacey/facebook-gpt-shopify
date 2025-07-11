@@ -7,7 +7,7 @@ import hashlib
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions
-from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility  # Import shared pre-check
+from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from digitalocean_integration.spaces import has_data_changed, upload_to_spaces, get_data_from_spaces

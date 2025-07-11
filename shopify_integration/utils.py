@@ -7,10 +7,12 @@ import base64
 import boto3
 from fastapi import HTTPException, Request
 from shared.tokens import TokenStorage
+from shared.utils import retry_async
 from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
 
 token_storage = TokenStorage()
 
+@retry_async
 async def exchange_code_for_token(code: str, shop: str):
     url = f"https://{shop}/admin/oauth/access_token"
     data = {
@@ -20,6 +22,7 @@ async def exchange_code_for_token(code: str, shop: str):
     }
     async with httpx.AsyncClient() as client:
         response = await client.post(url, json=data)
+        print(f"Shopify token exchange response for {shop}: {response.status_code}, {response.text}")
         response.raise_for_status()
         return response.json()
 
@@ -117,32 +120,36 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
     }
     """
 
+    @retry_async
+    async def make_graphql_request(client, url, headers, query):
+        return await client.post(url, headers=headers, json={"query": query})
+
     metadata_result = {}
     products_result = {}
-    for attempt in range(retries):
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, headers=headers, json={"query": metadata_query})
-                response.raise_for_status()
+    async with httpx.AsyncClient() as client:
+        for attempt in range(retries):
+            try:
+                response = await make_graphql_request(client, url, headers, metadata_query)
                 metadata_data = response.json()
                 if "errors" in metadata_data:
                     error_message = "; ".join([error["message"] for error in metadata_data["errors"]])
                     raise HTTPException(status_code=400, detail=f"GraphQL metadata query failed: {error_message}")
                 metadata_result = metadata_data["data"]
 
-                response = await client.post(url, headers=headers, json={"query": products_query})
-                response.raise_for_status()
+                response = await make_graphql_request(client, url, headers, products_query)
                 products_data = response.json()
                 if "errors" in products_data:
                     error_message = "; ".join([error["message"] for error in products_data["errors"]])
                     raise HTTPException(status_code=400, detail=f"GraphQL products query failed: {error_message}")
                 products_result = products_data["data"]
 
+                print(f"Shopify data fetched for {shop}")
                 return {"metadata": metadata_result, "products": products_result}
-        except httpx.HTTPStatusError as e:
-            if attempt == retries - 1 or e.response.status_code != 429:
-                raise
-            await asyncio.sleep(2 ** attempt)
+            except httpx.HTTPStatusError as e:
+                if attempt == retries - 1 or e.response.status_code != 429:
+                    print(f"Shopify GraphQL query failed for {shop}: {str(e)}")
+                    raise
+                await asyncio.sleep(2 ** attempt)
 
 async def verify_hmac(request: Request) -> bool:
     hmac_header = request.headers.get("X-Shopify-Hmac-Sha256")
@@ -156,6 +163,7 @@ async def verify_hmac(request: Request) -> bool:
 
     return hmac.compare_digest(hmac_header, expected_hmac_b64)
 
+@retry_async
 async def register_webhooks(shop: str, access_token: str):
     webhook_topics = [
         "products/create",
@@ -180,13 +188,16 @@ async def register_webhooks(shop: str, access_token: str):
         else:
             print(f"Webhook for {topic} already exists for {shop}")
 
+@retry_async
 async def get_existing_webhooks(shop: str, access_token: str):
     url = f"https://{shop}/admin/api/2025-04/webhooks.json"
     headers = {"X-Shopify-Access-Token": access_token}
     async with httpx.AsyncClient() as client:
         response = await client.get(url, headers=headers)
+        print(f"Shopify webhooks response for {shop}: {response.status_code}, {response.text}")
         return response.json().get("webhooks", [])
 
+@retry_async
 async def register_webhook(shop: str, access_token: str, topic: str, address: str):
     url = f"https://{shop}/admin/api/2025-04/webhooks.json"
     headers = {
@@ -202,10 +213,10 @@ async def register_webhook(shop: str, access_token: str, topic: str, address: st
     }
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, json=payload)
-        if response.status_code == 201:
-            print(f"Webhook registered for {topic} at {shop}")
-        else:
-            print(f"Failed to register webhook for {topic} at {shop}: {response.text}")
+        print(f"Shopify webhook registration response for {topic} at {shop}: {response.status_code}, {response.text}")
+        if response.status_code != 201:
+            raise HTTPException(status_code=500, detail=f"Failed to register webhook: {response.text}")
+        print(f"Webhook registered for {topic} at {shop}")
 
 async def daily_poll():
     shops = [
