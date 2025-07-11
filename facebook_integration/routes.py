@@ -282,7 +282,12 @@ async def facebook_webhook(request: Request):
 
         if "changes" in entry:
             try:
-                updated_data = await get_facebook_data(access_token, user_uuid, s3_client)
+                # Use user access token instead of page access token
+                user_access_token = token_storage.get_token("FACEBOOK_USER_ACCESS_TOKEN")
+                if not user_access_token:
+                    print(f"User access token not found for user {user_uuid}")
+                    continue
+                updated_data = await get_facebook_data(user_access_token, user_uuid, s3_client)
                 existing_data["data"] = updated_data["data"]
                 existing_data["paging"] = updated_data["paging"]
                 print(f"Updated page data for page {page_id}")

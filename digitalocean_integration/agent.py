@@ -67,11 +67,11 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "llama3.3-70b-instruct",
-        "prompt": prompt,
-        "max_tokens": 200
+        "model": "n/a",
+        "messages": [{"role": "user", "content": prompt}],
+        "extra_body": {"include_retrieval_info": True}
     }
-    endpoint = os.getenv("AGENT_ENDPOINT", "https://et7wtbptiokv4v3rs2ucud4m.agents.do-ai.run")
+    endpoint = os.getenv("AGENT_ENDPOINT", "https://et7wtbptiokv4v3rs2ucud4m.agents.do-ai.run/api/v1/")
     print(f"Sending request to GenAI API: {endpoint}")
     async with httpx.AsyncClient() as client:
         try:
@@ -83,8 +83,12 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
             print(f"GenAI API response: {response.status_code}, {response.text}")
             if response.status_code != 200:
                 raise HTTPException(status_code=500, detail=f"GenAI API error: {response.text}")
+            response_data = response.json()
+            choices = response_data.get("choices", [{}])
+            if not choices or not choices[0].get("message", {}).get("content"):
+                raise HTTPException(status_code=500, detail="GenAI API returned no valid response")
             return {
-                "text": response.json().get("choices", [{}])[0].get("text", "").strip(),
+                "text": choices[0]["message"]["content"].strip(),
                 "message_id": f"agent_mid_{int(time.time())}"
             }
         except Exception as e:
