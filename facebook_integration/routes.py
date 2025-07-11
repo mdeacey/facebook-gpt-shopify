@@ -3,6 +3,7 @@ import boto3
 import time
 import hmac
 import hashlib
+import httpx
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions, send_facebook_message
@@ -117,12 +118,13 @@ async def oauth_callback(request: Request):
         hmac_signature = f"sha1={hmac.new(secret.encode(), json.dumps(test_metadata_payload).encode(), hashlib.sha1).hexdigest()}"
         print(f"Sending metadata webhook test to {webhook_url} with payload {json.dumps(test_metadata_payload)}")
         start_time = time.time()
-        response = await client.post(
-            webhook_url,
-            headers={"X-Hub-Signature": hmac_signature, "Content-Type": "application/json"},
-            data=json.dumps(test_metadata_payload),
-            timeout=10
-        )
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                webhook_url,
+                headers={"X-Hub-Signature": hmac_signature, "Content-Type": "application/json"},
+                data=json.dumps(test_metadata_payload),
+                timeout=10
+            )
         print(f"Metadata webhook test response: status {response.status_code}, body {response.text}")
         result = {
             "entity_id": page_id,
