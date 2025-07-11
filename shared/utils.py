@@ -42,7 +42,10 @@ async def check_endpoint_accessibility(
             "HEAD": client.head,
             "POST": client.post
         }[method]
-        return await request_method(endpoint, headers=headers, json={} if method == "POST" else None, timeout=5)
+        kwargs = {"headers": headers, "timeout": 5}
+        if method == "POST":
+            kwargs["json"] = {}
+        return await request_method(endpoint, **kwargs)
 
     async with httpx.AsyncClient() as client:
         try:
