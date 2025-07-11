@@ -13,12 +13,12 @@ token_storage = TokenStorage()
 async def generate_agent_response(page_id: str, sender_id: str, message_text: str, user_uuid: str) -> dict:
     print(f"Generating AI response for page {page_id}, sender {sender_id}, message: {message_text}")
     
-    base_endpoint = os.getenv("AGENT_ENDPOINT", "https://et7wtbptiokv4v3rs2ucud4m.agents.do-ai.run/api/v1/")
+    base_endpoint = os.getenv("AGENT_ENDPOINT", "https://et7wtbptiokv4v3rs2ucud4m.agents.do-ai.run/")
     health_endpoint = base_endpoint.rstrip("/") + "/health"
-    chat_endpoint = base_endpoint.rstrip("/") + "/chat/completions"
+    chat_endpoint = base_endpoint.rstrip("/") + "/api/v1/chat/completions"
     api_key = os.getenv("AGENT_API_KEY")
     
-    if not base_endpoint.startswith("https://") or not base_endpoint.endswith("/api/v1/"):
+    if not base_endpoint.startswith("https://"):
         raise HTTPException(status_code=500, detail="Invalid AGENT_ENDPOINT format")
     if not api_key:
         raise HTTPException(status_code=500, detail="AGENT_API_KEY is not set")
