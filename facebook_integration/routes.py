@@ -7,7 +7,7 @@ import hashlib
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
 from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions
-from shared.utils import generate_state_token, validate_state_token
+from shared.utils import generate_state_token, validate_state_token, compute_data_hash
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
@@ -89,65 +89,114 @@ async def oauth_callback(request: Request):
         else:
             print(f"Webhook subscription for 'name,category,messages' already exists for page {page_id}")
 
-        test_metadata_payload = {
-            "object": "page",
-            "entry": [{"id": page_id, "changes": [{"field": "name", "value": "Test Page"}]}]
-        }
-        secret = os.getenv("FACEBOOK_APP_SECRET")
-        hmac_signature = f"sha1={hmac.new(secret.encode(), json.dumps(test_metadata_payload).encode(), hashlib.sha1).hexdigest()}"
         async with httpx.AsyncClient() as client:
+            test_metadata_payload = {
+                "object": "page",
+                "entry": [{"id": page_id, "changes": [{"field": "name", "value": "Test Page"}]}]
+            }
+            secret = os.getenv("FACEBOOK_APP_SECRET")
+            hmac_signature = f"sha1={hmac.new(secret.encode(), json.dumps(test_metadata_payload).encode(), hashlib.sha1).hexdigest()}"
+            start_time = time.time()
             response = await client.post(
                 f"{os.getenv('FACEBOOK_WEBHOOK_ADDRESS', 'http://localhost:5000/facebook/webhook')}",
                 headers={"X-Hub-Signature": hmac_signature, "Content-Type": "application/json"},
                 data=json.dumps(test_metadata_payload)
             )
-            webhook_test_result = response.json() if response.status_code == 200 else {
-                "status": "error", "message": response.text
-            }
-            webhook_test_results.append({"page_id": page_id, "type": "metadata", "result": webhook_test_result})
-            print(f"Metadata webhook test result for page {page_id}: {webhook_test_result}")
-
-        test_message_payload = {
-            "object": "page",
-            "entry": [
-                {
-                    "id": page_id,
-                    "messaging": [
-                        {
-                            "sender": {"id": "test_user_id"},
-                            "recipient": {"id": page_id},
-                            "timestamp": int(time.time() * 1000),
-                            "message": {"mid": "test_mid", "text": "Test message"}
-                        }
-                    ]
+            result = {
+                "entity_id": page_id,
+                "result": {
+                    "status": "success" if response.status_code == 200 else "failed",
+                    "message": "Metadata webhook test succeeded" if response.status_code == 200 else "Metadata webhook test failed",
+                    "attempt_timestamp": int(time.time() * 1000)
                 }
-            ]
-        }
-        hmac_signature = f"sha1={hmac.new(secret.encode(), json.dumps(test_message_payload).encode(), hashlib.sha1).hexdigest()}"
-        async with httpx.AsyncClient() as client:
+            }
+            if start_time:
+                result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
+            if response.status_code != 200:
+                result["result"].update({
+                    "http_status_code": response.status_code,
+                    "response_body": response.text,
+                    "request_payload": json.dumps(test_metadata_payload),
+                    "server_response_headers": dict(response.headers)
+                })
+            webhook_test_results.append(result)
+            print(f"Metadata webhook test result for page {page_id}: {result}")
+
+            test_message_payload = {
+                "object": "page",
+                "entry": [
+                    {
+                        "id": page_id,
+                        "messaging": [
+                            {
+                                "sender": {"id": "test_user_id"},
+                                "recipient": {"id": page_id},
+                                "timestamp": int(time.time() * 1000),
+                                "message": {"mid": "test_mid", "text": "Test message"}
+                            }
+                        ]
+                    }
+                ]
+            }
+            hmac_signature = f"sha1={hmac.new(secret.encode(), json.dumps(test_message_payload).encode(), hashlib.sha1).hexdigest()}"
+            start_time = time.time()
             response = await client.post(
                 f"{os.getenv('FACEBOOK_WEBHOOK_ADDRESS', 'http://localhost:5000/facebook/webhook')}",
                 headers={"X-Hub-Signature": hmac_signature, "Content-Type": "application/json"},
                 data=json.dumps(test_message_payload)
             )
-            webhook_test_result = response.json() if response.status_code == 200 else {
-                "status": "error", "message": response.text
+            result = {
+                "entity_id": page_id,
+                "result": {
+                    "status": "success" if response.status_code == 200 else "failed",
+                    "message": "Message webhook test succeeded" if response.status_code == 200 else "Message webhook test failed",
+                    "attempt_timestamp": int(time.time() * 1000)
+                }
             }
-            webhook_test_results.append({"page_id": page_id, "type": "messages", "result": webhook_test_result})
-            print(f"Message webhook test result for page {page_id}: {webhook_test_result}")
+            if start_time:
+                result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
+            if response.status_code != 200:
+                result["result"].update({
+                    "http_status_code": response.status_code,
+                    "response_body": response.text,
+                    "request_payload": json.dumps(test_message_payload),
+                    "server_response_headers": dict(response.headers)
+                })
+            webhook_test_results.append(result)
+            print(f"Message webhook test result for page {page_id}: {result}")
 
-        upload_status_result = {"status": "failed", "message": "Tests failed"}
-        try:
-            spaces_key = f"users/{user_uuid}/facebook/data.json"
-            if has_data_changed(data, spaces_key, s3_client):
-                upload_to_spaces(data, spaces_key, s3_client)
-                print(f"Uploaded data to Spaces for page {page_id}")
-            upload_status_result = {"status": "success"}
-            print(f"Upload status verified for page {page_id}: Success")
-        except Exception as e:
-            upload_status_result = {"status": "failed", "message": f"Upload verification failed: {str(e)}"}
-            print(f"Upload verification failed for page {page_id}: {str(e)}")
-        upload_status_results.append({"page_id": page_id, "result": upload_status_result})
+        start_time = time.time()
+        has_changed = has_data_changed(data, f"users/{user_uuid}/facebook/data.json", s3_client)
+        result = {
+            "entity_id": page_id,
+            "result": {
+                "status": "skipped" if not has_changed else "failed",
+                "message": "No changes detected, upload skipped" if not has_changed else "Upload verification failed",
+                "attempt_timestamp": int(time.time() * 1000)
+            }
+        }
+        if start_time:
+            result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
+        if has_changed:
+            try:
+                upload_to_spaces(data, f"users/{user_uuid}/facebook/data.json", s3_client)
+                result["result"].update({
+                    "status": "success",
+                    "message": "Data successfully uploaded to Spaces",
+                    "upload_timestamp": int(time.time() * 1000),
+                    "bytes_uploaded": len(json.dumps(data).encode()),
+                    "data_hash": compute_data_hash(data),
+                    "upload_duration_ms": int((time.time() - start_time) * 1000)
+                })
+            except Exception as e:
+                result["result"].update({
+                    "status": "failed",
+                    "message": f"Upload verification failed: {str(e)}",
+                    "error_details": str(e),
+                    "data_size_bytes": len(json.dumps(data).encode()) if data else 0
+                })
+        upload_status_results.append(result)
+        print(f"Upload status result for page {page_id}: {result}")
 
     response = JSONResponse(content={
         "user_uuid": user_uuid,

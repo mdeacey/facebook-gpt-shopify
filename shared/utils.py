@@ -4,9 +4,14 @@ import hmac
 import hashlib
 import base64
 import secrets
+import json
 from fastapi import HTTPException
 
 STATE_TOKEN_SECRET = os.getenv("STATE_TOKEN_SECRET", "changeme-in-prod")
+
+def compute_data_hash(data: dict) -> str:
+    serialized = json.dumps(data, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(serialized.encode()).hexdigest()
 
 def generate_state_token(expiry_seconds: int = 300, extra_data: str = None) -> str:
     timestamp = int(time.time())

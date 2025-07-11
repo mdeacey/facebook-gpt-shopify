@@ -7,11 +7,12 @@ import base64
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import exchange_code_for_token, get_shopify_data, verify_hmac, register_webhooks
-from shared.utils import generate_state_token, validate_state_token
+from shared.utils import generate_state_token, validate_state_token, compute_data_hash
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from digitalocean_integration.utils import has_data_changed, upload_to_spaces
 import httpx
+import time
 
 router = APIRouter()
 token_storage = TokenStorage()
@@ -68,7 +69,7 @@ async def oauth_callback(request: Request):
     token_storage.store_token(f"SHOPIFY_ACCESS_TOKEN_{shop_key}", token_data["access_token"], type="token")
     token_storage.store_token(f"USER_UUID_{shop_key}", user_uuid, type="uuid")
 
-    webhook_test_result = {"status": "failed", "message": "Webhook registration failed"}
+    webhook_test_result = None
     try:
         await register_webhooks(shop, token_data["access_token"])
         test_payload = {"product": {"id": 12345, "title": "Test Product"}}
@@ -76,7 +77,7 @@ async def oauth_callback(request: Request):
         hmac_signature = base64.b64encode(
             hmac.new(secret.encode(), json.dumps(test_payload).encode(), hashlib.sha256).digest()
         ).decode()
-
+        start_time = time.time()
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{os.getenv('SHOPIFY_WEBHOOK_ADDRESS', 'http://localhost:5000/shopify/webhook')}",
@@ -88,13 +89,38 @@ async def oauth_callback(request: Request):
                 },
                 data=json.dumps(test_payload)
             )
-            webhook_test_result = response.json() if response.status_code == 200 else {
-                "status": "failed",
-                "message": response.text
+        result = {
+            "entity_id": shop,
+            "result": {
+                "status": "success" if response.status_code == 200 else "failed",
+                "message": "Products/update webhook test succeeded" if response.status_code == 200 else "Products/update webhook test failed",
+                "attempt_timestamp": int(time.time() * 1000)
             }
+        }
+        if start_time:
+            result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
+        if response.status_code != 200:
+            result["result"].update({
+                "http_status_code": response.status_code,
+                "response_body": response.text,
+                "request_payload": json.dumps(test_payload),
+                "server_response_headers": dict(response.headers)
+            })
+        webhook_test_result = result
         print(f"Webhook test result for {shop}: {webhook_test_result}")
     except Exception as e:
-        webhook_test_result = {"status": "failed", "message": f"Webhook setup failed: {str(e)}"}
+        result = {
+            "entity_id": shop,
+            "result": {
+                "status": "failed",
+                "message": f"Webhook setup failed: {str(e)}",
+                "attempt_timestamp": int(time.time() * 1000)
+            }
+        }
+        result["result"]["error_details"] = str(e)
+        if test_payload:
+            result["result"]["data_size_bytes"] = len(json.dumps(test_payload).encode())
+        webhook_test_result = result
         print(f"Webhook setup failed for {shop}: {str(e)}")
 
     data = await get_shopify_data(token_data["access_token"], shop)
@@ -108,16 +134,38 @@ async def oauth_callback(request: Request):
         aws_secret_access_key=os.getenv("SPACES_API_SECRET")
     )
 
-    upload_status_result = {"status": "failed", "message": "Tests failed"}
-    try:
-        spaces_key = f"users/{user_uuid}/shopify/data.json"
-        if has_data_changed(data, spaces_key, s3_client):
-            upload_to_spaces(data, spaces_key, s3_client)
-            print(f"Uploaded data to Spaces for {shop}")
-        upload_status_result = {"status": "success"}
-    except Exception as e:
-        upload_status_result = {"status": "failed", "message": f"Spaces upload failed: {str(e)}"}
-        print(f"Failed to upload to Spaces for {shop}: {str(e)}")
+    start_time = time.time()
+    has_changed = has_data_changed(data, f"users/{user_uuid}/shopify/data.json", s3_client)
+    result = {
+        "entity_id": shop,
+        "result": {
+            "status": "skipped" if not has_changed else "failed",
+            "message": "No changes detected, upload skipped" if not has_changed else "Upload verification failed",
+            "attempt_timestamp": int(time.time() * 1000)
+        }
+    }
+    if start_time:
+        result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
+    if has_changed:
+        try:
+            upload_to_spaces(data, f"users/{user_uuid}/shopify/data.json", s3_client)
+            result["result"].update({
+                "status": "success",
+                "message": "Data successfully uploaded to Spaces",
+                "upload_timestamp": int(time.time() * 1000),
+                "bytes_uploaded": len(json.dumps(data).encode()),
+                "data_hash": compute_data_hash(data),
+                "upload_duration_ms": int((time.time() - start_time) * 1000)
+            })
+        except Exception as e:
+            result["result"].update({
+                "status": "failed",
+                "message": f"Upload verification failed: {str(e)}",
+                "error_details": str(e),
+                "data_size_bytes": len(json.dumps(data).encode()) if data else 0
+            })
+    upload_status_result = result
+    print(f"Upload status result for {shop}: {upload_status_result}")
 
     response = JSONResponse(content={
         "user_uuid": user_uuid,
