@@ -35,22 +35,24 @@ class TokenStorage:
                     CREATE TABLE IF NOT EXISTS tokens (
                         key TEXT PRIMARY KEY,
                         value TEXT NOT NULL,
-                        type TEXT NOT NULL
+                        type TEXT NOT NULL,
+                        status TEXT DEFAULT 'active',
+                        expires_at INTEGER
                     )
                 """)
                 conn.commit()
         except sqlite3.OperationalError as e:
             raise HTTPException(status_code=500, detail=f"Database initialization failed: {str(e)}")
 
-    def store_token(self, key: str, value: str, type: str = "token") -> None:
+    def store_token(self, key: str, value: str, type: str = "token", status: str = "active", expires_at: int = None):
         encrypted_value = self.fernet.encrypt(value.encode()).decode()
         for _ in range(3):
             try:
                 with sqlite3.connect(self.db_path, timeout=10) as conn:
                     cursor = conn.cursor()
                     cursor.execute(
-                        "INSERT OR REPLACE INTO tokens (key, value, type) VALUES (?, ?, ?)",
-                        (key, encrypted_value, type)
+                        "INSERT OR REPLACE INTO tokens (key, value, type, status, expires_at) VALUES (?, ?, ?, ?, ?)",
+                        (key, encrypted_value, type, status, expires_at)
                     )
                     conn.commit()
                     return
@@ -61,14 +63,16 @@ class TokenStorage:
                     raise
         raise HTTPException(status_code=500, detail="Database write failed after retries")
 
-    def get_token(self, key: str) -> Optional[str]:
+    def get_token(self, key: str) -> Optional[dict]:
         try:
             with sqlite3.connect(self.db_path, timeout=10) as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT value FROM tokens WHERE key = ?", (key,))
+                cursor.execute("SELECT value, status, expires_at FROM tokens WHERE key = ?", (key,))
                 result = cursor.fetchone()
                 if result:
-                    return self.fernet.decrypt(result[0].encode()).decode()
+                    value, status, expires_at = result
+                    decrypted_value = self.fernet.decrypt(value.encode()).decode()
+                    return {"value": decrypted_value, "status": status, "expires_at": expires_at}
                 return None
         except sqlite3.OperationalError as e:
             raise HTTPException(status_code=500, detail=f"Database read failed: {str(e)}")
@@ -94,3 +98,12 @@ class TokenStorage:
                 conn.commit()
         except sqlite3.OperationalError as e:
             raise HTTPException(status_code=500, detail=f"Database delete failed: {str(e)}")
+
+    def mark_token_invalid(self, key: str):
+        try:
+            with sqlite3.connect(self.db_path, timeout=10) as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE tokens SET status = 'canceled' WHERE key = ?", (key,))
+                conn.commit()
+        except sqlite3.OperationalError as e:
+            raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")
