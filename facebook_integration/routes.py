@@ -7,8 +7,8 @@ import hashlib
 import httpx
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
-from .utils import exchange_code_for_token, get_facebook_data, verify_webhook, register_webhooks, get_existing_subscriptions, send_facebook_message
-from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility
+from .utils import get_facebook_data, register_webhooks, get_existing_subscriptions, send_facebook_message
+from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility, exchange_code_for_token, verify_hmac
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from shared.config import config
@@ -64,7 +64,13 @@ async def oauth_callback(request: Request):
 
     new_session_id, user_uuid = session_storage.get_or_create_session(session_id)
 
-    token_data = await exchange_code_for_token(code)
+    token_data = await exchange_code_for_token(
+        code=code,
+        client_id=config.facebook_app_id,
+        client_secret=config.facebook_app_secret,
+        redirect_uri=config.facebook_redirect_uri,
+        token_url="https://graph.facebook.com/v19.0/oauth/access_token"
+    )
     if "access_token" not in token_data:
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data}")
 
@@ -88,8 +94,7 @@ async def oauth_callback(request: Request):
     is_accessible, accessibility_message = await check_endpoint_accessibility(
         endpoint=webhook_url,
         endpoint_type="webhook",
-        method="GET",
-        expected_status=403
+        method="GET"
     )
     if not is_accessible:
         logger.error(f"Webhook endpoint check failed: {accessibility_message}")
@@ -102,8 +107,9 @@ async def oauth_callback(request: Request):
             }
         })
 
+    entities = data.get("data", [])  # Pages
     async with httpx.AsyncClient() as client:
-        for page in data.get("data", []):
+        for page in entities:
             page_id = page["id"]
             token_storage.store_token(f"FACEBOOK_ACCESS_TOKEN_{page_id}", page["access_token"], type="token")
             token_storage.store_token(f"PAGE_UUID_{page_id}", user_uuid, type="uuid")
@@ -144,7 +150,8 @@ async def oauth_callback(request: Request):
                     "http_status_code": response.status_code,
                     "response_body": response.text,
                     "request_payload": json.dumps(test_metadata_payload),
-                    "server_response_headers": dict(response.headers)
+                    "server_response_headers": dict(response.headers),
+                    "data_size_bytes": len(json.dumps(test_metadata_payload).encode())
                 })
             webhook_test_results.append(result)
             logger.info(f"Metadata webhook test result for page {page_id}: {result}")
@@ -188,8 +195,8 @@ async def oauth_callback(request: Request):
     response = JSONResponse(content={
         "user_uuid": user_uuid,
         "data": data,
-        "webhook_test": webhook_test_results,
-        "upload_status": upload_status_results
+        "webhook_test_results": webhook_test_results,
+        "upload_status_results": upload_status_results
     })
     response.set_cookie(key="session_id", value=new_session_id, httponly=True, max_age=3600)
     return response
@@ -197,7 +204,7 @@ async def oauth_callback(request: Request):
 @router.post("/webhook")
 async def facebook_webhook(request: Request):
     logger.info(f"Received webhook request: headers {dict(request.headers)}")
-    if not await verify_webhook(request):
+    if not await verify_hmac(request, config.facebook_app_secret, signature_header="X-Hub-Signature", hash_algorithm=hashlib.sha1):
         logger.error("Invalid HMAC signature")
         raise HTTPException(status_code=401, detail="Invalid HMAC signature")
 
@@ -291,6 +298,11 @@ async def verify_webhook_subscription(request: Request):
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
     logger.info(f"Webhook verification: mode={mode}, token={token}, challenge={challenge}")
+    
     if mode == "subscribe" and token == config.facebook_verify_token:
         return PlainTextResponse(challenge)
+    
+    if not mode:
+        return JSONResponse(content={"status": "ok"}, status_code=200)
+    
     raise HTTPException(status_code=403, detail="Verification failed")

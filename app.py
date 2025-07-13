@@ -29,9 +29,10 @@ async def root():
     return {"status": "ok"}
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(shopify_daily_poll, CronTrigger(hour=0, minute=0))
-scheduler.add_job(facebook_daily_poll, CronTrigger(hour=0, minute=0))
-scheduler.start()
+if not scheduler.running:
+    scheduler.add_job(shopify_daily_poll, CronTrigger(hour=0, minute=0), id="shopify_daily_poll")
+    scheduler.add_job(facebook_daily_poll, CronTrigger(hour=0, minute=0), id="facebook_daily_poll")
+    scheduler.start()
 
 atexit.register(lambda: scheduler.shutdown())
 
