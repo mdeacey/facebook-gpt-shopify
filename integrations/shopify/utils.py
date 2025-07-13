@@ -6,7 +6,7 @@ import boto3
 from fastapi import HTTPException
 from shared.tokens import TokenStorage
 from shared.utils import retry_async
-from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
+from digitalocean.spaces import has_data_changed, upload_to_spaces
 
 logger = logging.getLogger(__name__)
 

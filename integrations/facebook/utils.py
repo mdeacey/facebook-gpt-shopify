@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import HTTPException, Request
 from shared.tokens import TokenStorage
 from shared.utils import retry_async
-from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
+from digitalocean.spaces import has_data_changed, upload_to_spaces
 
 logger = logging.getLogger(__name__)
 

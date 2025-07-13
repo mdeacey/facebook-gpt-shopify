@@ -1,12 +1,12 @@
 from fastapi import FastAPI, Request
 from shared.logging import setup_logging
-from facebook_integration.routes import router as facebook_oauth_router
-from shopify_integration.routes import router as shopify_oauth_router
+from integrations.facebook.routes import router as facebook_oauth_router
+from integrations.shopify.routes import router as shopify_oauth_router
 from starlette.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from facebook_integration.utils import daily_poll as facebook_daily_poll
-from shopify_integration.utils import daily_poll as shopify_daily_poll
+from integrations.facebook.utils import daily_poll as facebook_daily_poll
+from integrations.shopify.utils import daily_poll as shopify_daily_poll
 import atexit
 import logging
 import uuid

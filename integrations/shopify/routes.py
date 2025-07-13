@@ -13,7 +13,7 @@ from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from shared.config import config
 from shared.models import ShopifyWebhookPayload
-from digitalocean_integration.spaces import has_data_changed, upload_to_spaces
+from digitalocean.spaces import has_data_changed, upload_to_spaces
 from msgspec.json import decode
 from msgspec.structs import asdict
 import time
