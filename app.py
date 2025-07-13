@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from shared.logging import setup_logging
+from shared.logging import logger
 from integrations.facebook.routes import router as facebook_oauth_router
 from integrations.shopify.routes import router as shopify_oauth_router
 from starlette.middleware.cors import CORSMiddleware
@@ -8,16 +8,19 @@ from apscheduler.triggers.cron import CronTrigger
 from integrations.facebook.utils import daily_poll as facebook_daily_poll
 from integrations.shopify.utils import daily_poll as shopify_daily_poll
 import atexit
-import logging
 import uuid
+import os
 
-setup_logging(log_level=logging.INFO, log_file="app.log")
+# Log application start
+logger.debug("Starting application")
 
 app = FastAPI(title="Facebook and Shopify OAuth with FastAPI")
 
+# Middleware to add request_id to request.state
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
     request.state.request_id = str(uuid.uuid4())
+    logger.debug(f"[{request.state.request_id}] Processing request: {request.url} with headers: {dict(request.headers)}")
     response = await call_next(request)
     return response
 
@@ -35,14 +38,16 @@ app.include_router(shopify_oauth_router, prefix="/shopify")
 async def root():
     return {"status": "ok"}
 
+# Initialize scheduler only once
 scheduler = BackgroundScheduler()
 if not scheduler.running:
-    scheduler.add_job(shopify_daily_poll, CronTrigger(hour=0, minute=0), id="shopify_daily_poll")
-    scheduler.add_job(facebook_daily_poll, CronTrigger(hour=0, minute=0), id="facebook_daily_poll")
+    scheduler.add_job(shopify_daily_poll, CronTrigger(hour=0, minute=0), id="shopify_daily_poll", replace_existing=True)
+    scheduler.add_job(facebook_daily_poll, CronTrigger(hour=0, minute=0), id="facebook_daily_poll", replace_existing=True)
     scheduler.start()
+    logger.info("Scheduler started with jobs: shopify_daily_poll, facebook_daily_poll")
 
 atexit.register(lambda: scheduler.shutdown())
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=5000, reload=True)
+    uvicorn.run("app:app", host="0.0.0.0", port=5000, reload=True, workers=1)

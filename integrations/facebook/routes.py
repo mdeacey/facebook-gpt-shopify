@@ -13,8 +13,8 @@ from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from shared.config import config
 from shared.models import FacebookWebhookPayload
-from digitalocean.spaces import has_data_changed, upload_to_spaces, get_data_from_spaces
-from digitalocean.agent import generate_agent_response
+from integrations.digitalocean.spaces import has_data_changed, upload_to_spaces, get_data_from_spaces
+from integrations.digitalocean.agent import generate_agent_response
 from msgspec.json import decode
 
 logger = logging.getLogger(__name__)
