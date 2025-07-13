@@ -313,8 +313,8 @@ async def shopify_webhook(request: Request):
 
     return {"status": "success"}
 
-@router.get("/logout")
-async def logout(request: Request):
+@router.get("/revoke")
+async def revoke(request: Request):
     request_id = request.state.request_id
     logger.info(f"[{request_id}] Starting Shopify revoke")
     
