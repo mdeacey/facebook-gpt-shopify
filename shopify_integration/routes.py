@@ -4,7 +4,7 @@ import boto3
 import hmac
 import hashlib
 import base64
-import uuid
+import httpx
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from .utils import get_shopify_data, register_webhooks

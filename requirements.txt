@@ -8,3 +8,4 @@ cryptography
 environs
 openai
 msgspec
+tenacity

@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from shared.logging import setup_logging
 from facebook_integration.routes import router as facebook_oauth_router
 from shopify_integration.routes import router as shopify_oauth_router
@@ -9,10 +9,17 @@ from facebook_integration.utils import daily_poll as facebook_daily_poll
 from shopify_integration.utils import daily_poll as shopify_daily_poll
 import atexit
 import logging
+import uuid
 
 setup_logging(log_level=logging.INFO, log_file="app.log")
 
 app = FastAPI(title="Facebook and Shopify OAuth with FastAPI")
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request.state.request_id = str(uuid.uuid4())
+    response = await call_next(request)
+    return response
 
 app.add_middleware(
     CORSMiddleware,

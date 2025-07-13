@@ -4,6 +4,10 @@ from logging.handlers import RotatingFileHandler
 
 def setup_logging(log_level=logging.INFO, log_file="app.log"):
     logger = logging.getLogger()
+    
+    if logger.handlers:
+        return logger
+
     logger.setLevel(log_level)
 
     log_format = logging.Formatter(
@@ -23,4 +27,4 @@ def setup_logging(log_level=logging.INFO, log_file="app.log"):
 
     return logger
 
-setup_logging(log_level=logging.INFO)
+logger = setup_logging(log_level=logging.INFO)

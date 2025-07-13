@@ -12,8 +12,7 @@ logger = logging.getLogger(__name__)
 
 token_storage = TokenStorage()
 
-async def get_shopify_data(access_token: str, shop: str, retries=3):
-    request_id = getattr(httpx._models.Request, "state", {}).get("request_id", "unknown")
+async def get_shopify_data(access_token: str, shop: str, retries=3, request_id: str = "unknown"):
     url = f"https://{shop}/admin/api/2025-04/graphql.json"
     headers = {
         "X-Shopify-Access-Token": access_token,
@@ -143,8 +142,7 @@ async def get_shopify_data(access_token: str, shop: str, retries=3):
                 await asyncio.sleep(2 ** attempt)
 
 @retry_async
-async def register_webhooks(shop: str, access_token: str):
-    request_id = getattr(httpx._models.Request, "state", {}).get("request_id", "unknown")
+async def register_webhooks(shop: str, access_token: str, request_id: str = "unknown"):
     webhook_topics = [
         "products/create",
         "products/update",
@@ -162,16 +160,15 @@ async def register_webhooks(shop: str, access_token: str):
         logger.error(f"[{request_id}] SHOPIFY_WEBHOOK_ADDRESS not set")
         raise HTTPException(status_code=500, detail="SHOPIFY_WEBHOOK_ADDRESS not set")
 
-    existing_webhooks = await get_existing_webhooks(shop, access_token)
+    existing_webhooks = await get_existing_webhooks(shop, access_token, request_id=request_id)
     for topic in webhook_topics:
         if not any(w["topic"] == topic for w in existing_webhooks):
-            await register_webhook(shop, access_token, topic, webhook_address)
+            await register_webhook(shop, access_token, topic, webhook_address, request_id=request_id)
         else:
             logger.info(f"[{request_id}] Webhook for {topic} already exists for {shop}")
 
 @retry_async
-async def get_existing_webhooks(shop: str, access_token: str):
-    request_id = getattr(httpx._models.Request, "state", {}).get("request_id", "unknown")
+async def get_existing_webhooks(shop: str, access_token: str, request_id: str = "unknown"):
     url = f"https://{shop}/admin/api/2025-04/webhooks.json"
     headers = {"X-Shopify-Access-Token": access_token}
     async with httpx.AsyncClient() as client:
@@ -180,8 +177,7 @@ async def get_existing_webhooks(shop: str, access_token: str):
         return response.json().get("webhooks", [])
 
 @retry_async
-async def register_webhook(shop: str, access_token: str, topic: str, address: str):
-    request_id = getattr(httpx._models.Request, "state", {}).get("request_id", "unknown")
+async def register_webhook(shop: str, access_token: str, topic: str, address: str, request_id: str = "unknown"):
     url = f"https://{shop}/admin/api/2025-04/webhooks.json"
     headers = {
         "X-Shopify-Access-Token": access_token,
@@ -216,7 +212,7 @@ async def daily_poll():
             if not access_token or not user_uuid:
                 logger.error(f"[{request_id}] Missing access token or user UUID for shop {shop}")
                 continue
-            shopify_data = await get_shopify_data(access_token, shop)
+            shopify_data = await get_shopify_data(access_token, shop, request_id=request_id)
             session = boto3.session.Session()
             s3_client = session.client(
                 "s3",
