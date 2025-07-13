@@ -6,7 +6,7 @@ import hashlib
 import base64
 import httpx
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
 from .utils import get_shopify_data, register_webhooks
 from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility, exchange_code_for_token, verify_hmac
 from shared.sessions import SessionStorage
@@ -42,6 +42,14 @@ async def start_oauth(request: Request, shop_name: str):
 
     session_id = request.cookies.get("session_id")
     new_session_id, user_uuid = session_storage.get_or_create_session(session_id)
+
+    shop_key = shop_name.replace('.', '_')
+    token_keys = [
+        key for key in token_storage.get_all_tokens_by_type("token")
+        if key == f"SHOPIFY_ACCESS_TOKEN_{shop_key}" or key == f"USER_UUID_{shop_key}"
+    ]
+    for key in token_keys:
+        token_storage.delete_token(key)
 
     state = generate_state_token(extra_data=user_uuid)
 

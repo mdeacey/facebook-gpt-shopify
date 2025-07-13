@@ -35,6 +35,14 @@ async def start_oauth(request: Request):
     session_id = request.cookies.get("session_id")
     new_session_id, user_uuid = session_storage.get_or_create_session(session_id)
 
+    token_keys = [
+        key for key in token_storage.get_all_tokens_by_type("token")
+        if key.startswith("FACEBOOK_ACCESS_TOKEN_") or key.startswith("PAGE_UUID_")
+    ]
+    for key in token_keys:
+        if token_storage.get_token(key) and user_uuid == token_storage.get_token(f"PAGE_UUID_{key.replace('FACEBOOK_ACCESS_TOKEN_', '')}"):
+            token_storage.delete_token(key)
+
     state = generate_state_token(extra_data=user_uuid)
 
     auth_url = (
