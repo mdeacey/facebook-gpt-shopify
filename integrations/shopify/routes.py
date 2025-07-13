@@ -316,11 +316,11 @@ async def shopify_webhook(request: Request):
 @router.get("/logout")
 async def logout(request: Request):
     request_id = request.state.request_id
-    logger.info(f"[{request_id}] Starting Shopify logout")
+    logger.info(f"[{request_id}] Starting Shopify revoke")
     
     session_id = request.cookies.get("session_id")
     if not session_id:
-        logger.warning(f"[{request_id}] No session_id cookie found for logout request")
+        logger.warning(f"[{request_id}] No session_id cookie found for revoke request")
         raise HTTPException(status_code=400, detail="Missing session_id cookie")
     
     user_uuid = session_storage.get_uuid(session_id)
