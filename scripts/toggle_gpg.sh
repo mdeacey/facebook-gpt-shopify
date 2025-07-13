@@ -12,8 +12,6 @@ if [[ -f "$GPG_FILE" && ! -f "$ENV_FILE" ]]; then
 elif [[ -f "$ENV_FILE" && ! -f "$GPG_FILE" ]]; then
     echo "Encrypting $ENV_FILE to $GPG_FILE..."
     gpg -c -o "$GPG_FILE" "$ENV_FILE" || { echo "Encryption failed"; exit 1; }
-    echo "Removing unencrypted .env for safety."
-    rm "$ENV_FILE"
 
 else
     echo "⚠️  Cannot determine action:"

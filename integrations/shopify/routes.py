@@ -312,3 +312,57 @@ async def shopify_webhook(request: Request):
         logger.error(f"[{request_id}] Failed to update Spaces for {shop} via {event_type}: {str(e)}")
 
     return {"status": "success"}
+
+@router.get("/logout")
+async def logout(request: Request):
+    request_id = request.state.request_id
+    logger.info(f"[{request_id}] Starting Shopify logout")
+    
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        logger.warning(f"[{request_id}] No session_id cookie found for logout request")
+        raise HTTPException(status_code=400, detail="Missing session_id cookie")
+    
+    user_uuid = session_storage.get_uuid(session_id)
+    if not user_uuid:
+        logger.error(f"[{request_id}] Invalid or expired session")
+        raise HTTPException(status_code=400, detail="Invalid or expired session")
+    
+    shop_key = None
+    shop_name = None
+    for key, value in token_storage.get_all_tokens_by_type("uuid").items():
+        if key.startswith("USER_UUID_") and value == user_uuid:
+            shop_key = key.replace("USER_UUID_", "")
+            shop_name = shop_key.replace("_", ".")
+            break
+    
+    if not shop_name:
+        logger.warning(f"[{request_id}] No shop found for user {user_uuid}")
+        raise HTTPException(status_code=400, detail="No shop associated with this session")
+    
+    try:
+        session_storage.clear_session(session_id)
+        logger.info(f"[{request_id}] Cleared session {session_id} for user {user_uuid}")
+    except Exception as e:
+        logger.error(f"[{request_id}] Failed to clear session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear session: {str(e)}")
+    
+    token_keys = [
+        f"SHOPIFY_ACCESS_TOKEN_{shop_key}",
+        f"USER_UUID_{shop_key}"
+    ]
+    for key in token_keys:
+        try:
+            token_storage.delete_token(key)
+            logger.info(f"[{request_id}] Deleted token {key} for shop {shop_name}")
+        except Exception as e:
+            logger.error(f"[{request_id}] Failed to delete token {key}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to delete token {key}: {str(e)}")
+    
+    if not config.shopify_app_name:
+        logger.warning(f"[{request_id}] SHOPIFY_APP_NAME is not set, redirecting to generic apps page")
+        admin_apps_url = f"https://{shop_name}/admin/apps"
+    else:
+        admin_apps_url = f"https://{shop_name}/admin/apps/{config.shopify_app_name}"
+    logger.info(f"[{request_id}] Redirecting to Shopify admin apps page: {admin_apps_url}")
+    return RedirectResponse(admin_apps_url)

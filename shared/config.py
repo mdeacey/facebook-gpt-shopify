@@ -13,6 +13,7 @@ class Config:
     shopify_api_secret = env.str("SHOPIFY_API_SECRET")
     shopify_redirect_uri = env.str("SHOPIFY_REDIRECT_URI")
     shopify_webhook_address = env.str("SHOPIFY_WEBHOOK_ADDRESS")
+    shopify_app_name = env.str("SHOPIFY_APP_NAME")
     spaces_api_key = env.str("SPACES_API_KEY")
     spaces_api_secret = env.str("SPACES_API_SECRET")
     spaces_bucket = env.str("SPACES_BUCKET")
