@@ -2,11 +2,10 @@ import logging
 import os
 import httpx
 import asyncio
-import boto3
+import uuid
 from fastapi import HTTPException
 from shared.tokens import TokenStorage
-from shared.utils import retry_async
-from integrations.digitalocean.spaces import has_data_changed, upload_to_spaces
+from shared.utils import retry_async, save_local_data, load_local_data, has_data_changed
 
 logger = logging.getLogger(__name__)
 
@@ -213,19 +212,11 @@ async def daily_poll():
                 logger.error(f"[{request_id}] Missing access token or user UUID for shop {shop}")
                 continue
             shopify_data = await get_shopify_data(access_token, shop, request_id=request_id)
-            session = boto3.session.Session()
-            s3_client = session.client(
-                "s3",
-                region_name=os.getenv("SPACES_REGION", "nyc3"),
-                endpoint_url=f"https://{os.getenv('SPACES_REGION', 'nyc3')}.digitaloceanspaces.com",
-                aws_access_key_id=os.getenv("SPACES_API_KEY"),
-                aws_secret_access_key=os.getenv("SPACES_API_SECRET")
-            )
             spaces_key = f"users/{user_uuid}/shopify/data.json"
-            if has_data_changed(shopify_data, spaces_key, s3_client):
-                upload_to_spaces(shopify_data, spaces_key, s3_client)
-                logger.info(f"[{request_id}] Polled and uploaded data for {shop}: Success")
+            if has_data_changed(shopify_data, spaces_key):
+                save_local_data(shopify_data, spaces_key)
+                logger.info(f"[{request_id}] Polled and saved data for {shop}: Success")
             else:
-                logger.info(f"[{request_id}] Polled data for {shop}: No upload needed, data unchanged")
+                logger.info(f"[{request_id}] Polled data for {shop}: No save needed, data unchanged")
         except Exception as e:
             logger.error(f"[{request_id}] Daily poll failed for {shop}: {str(e)}")

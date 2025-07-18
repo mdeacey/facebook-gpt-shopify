@@ -1,6 +1,5 @@
 import logging
 import json
-import boto3
 import hmac
 import hashlib
 import base64
@@ -8,12 +7,11 @@ import httpx
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
 from .utils import get_shopify_data, register_webhooks
-from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility, exchange_code_for_token, verify_hmac
+from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility, exchange_code_for_token, verify_hmac, save_local_data, load_local_data, has_data_changed
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from shared.config import config
 from shared.models import ShopifyWebhookPayload
-from integrations.digitalocean.spaces import has_data_changed, upload_to_spaces
 from msgspec.json import decode
 from msgspec.structs import asdict
 import time
@@ -193,17 +191,8 @@ async def oauth_callback(request: Request):
                 webhook_test_results.append(result)
                 logger.error(f"[{request_id}] Webhook setup failed for {shop_id}: {str(e)}")
 
-            session = boto3.session.Session()
-            s3_client = session.client(
-                "s3",
-                region_name=config.spaces_region,
-                endpoint_url=config.spaces_endpoint,
-                aws_access_key_id=config.spaces_api_key,
-                aws_secret_access_key=config.spaces_api_secret
-            )
-
             start_time = time.time()
-            has_changed = has_data_changed(data, f"users/{user_uuid}/shopify/data.json", s3_client)
+            has_changed = has_data_changed(data, f"users/{user_uuid}/shopify/data.json")
             result = {
                 "entity_id": shop_id,
                 "result": {
@@ -214,15 +203,15 @@ async def oauth_callback(request: Request):
             }
             if start_time:
                 result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
-            previous_hash = get_previous_hash(s3_client, config.spaces_bucket, f"users/{user_uuid}/shopify/data.json")
+            previous_hash = get_previous_hash(f"users/{user_uuid}/shopify/data.json")
             if previous_hash:
                 result["result"]["previous_hash"] = previous_hash
             if has_changed:
                 try:
-                    upload_to_spaces(data, f"users/{user_uuid}/shopify/data.json", s3_client)
+                    save_local_data(data, f"users/{user_uuid}/shopify/data.json")
                     result["result"].update({
                         "status": "success",
-                        "message": "Data successfully uploaded to Spaces",
+                        "message": "Data successfully saved locally",
                         "upload_timestamp": int(time.time() * 1000),
                         "bytes_uploaded": len(json.dumps(data).encode()),
                         "data_hash": compute_data_hash(data),
@@ -296,20 +285,12 @@ async def shopify_webhook(request: Request):
 
     try:
         data = await get_shopify_data(access_token, shop, request_id=request_id)
-        session = boto3.session.Session()
-        s3_client = session.client(
-            "s3",
-            region_name=config.spaces_region,
-            endpoint_url=config.spaces_endpoint,
-            aws_access_key_id=config.spaces_api_key,
-            aws_secret_access_key=config.spaces_api_secret
-        )
         spaces_key = f"users/{user_uuid}/shopify/data.json"
-        if has_data_changed(data, spaces_key, s3_client):
-            upload_to_spaces(data, spaces_key, s3_client)
-            logger.info(f"[{request_id}] Updated data in Spaces for {shop} via {event_type}")
+        if has_data_changed(data, spaces_key):
+            save_local_data(data, spaces_key)
+            logger.info(f"[{request_id}] Updated data locally for {shop} via {event_type}")
     except Exception as e:
-        logger.error(f"[{request_id}] Failed to update Spaces for {shop} via {event_type}: {str(e)}")
+        logger.error(f"[{request_id}] Failed to update locally for {shop} via {event_type}: {str(e)}")
 
     return {"status": "success"}
 

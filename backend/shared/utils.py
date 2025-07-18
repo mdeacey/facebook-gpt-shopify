@@ -6,12 +6,13 @@ import hashlib
 import base64
 import secrets
 import json
-import boto3
 import httpx
 import uuid
 from fastapi import HTTPException, Request
 from typing import Optional, Literal, Callable
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from msgspec.json import decode
+from shared.models import SpacesData
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ def retry_async(func: Callable) -> Callable:
     return retry(
         stop=stop_after_attempt(1),  # Reduced to 1 attempt for webhook tests to avoid duplicates
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError, boto3.exceptions.Boto3Error)),
+        retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
         before_sleep=lambda retry_state: logger.info(
             f"{func.__name__} failed (attempt {retry_state.attempt_number}/1): {str(retry_state.outcome.exception())}. "
             f"Retrying in {retry_state.next_action.sleep}s..."
@@ -192,16 +193,49 @@ def validate_state_token(state_token: str, max_age: int = 300):
     logger.info(f"[{request_id}] State token validated successfully")
     return extra_data
 
-def get_previous_hash(s3_client: boto3.client, bucket: str, key: str) -> str | None:
+def get_previous_hash(key: str) -> str | None:
     request_id = str(uuid.uuid4())
-    @retry_async
-    def head_object():
-        return s3_client.head_object(Bucket=bucket, Key=key)
-
+    file_path = os.path.join("data", key)
     try:
-        head_response = head_object()
-        logger.info(f"[{request_id}] Retrieved previous hash for {bucket}/{key}: {head_response['ETag'].strip('"')}")
-        return head_response["ETag"].strip('"')
-    except Exception as e:
-        logger.info(f"[{request_id}] No previous hash found for {bucket}/{key}: {str(e)}")
+        with open(file_path, "r", encoding="utf-8") as f:
+            existing_data = json.load(f)
+            logger.info(f"[{request_id}] Retrieved previous hash for {key}: {compute_data_hash(existing_data)}")
+            return compute_data_hash(existing_data)
+    except FileNotFoundError:
+        logger.info(f"[{request_id}] No previous data found for {key}")
         return None
+    except Exception as e:
+        logger.error(f"[{request_id}] Failed to read previous data for {key}: {str(e)}")
+        return None
+
+async def load_local_data(key: str) -> dict:
+    file_path = os.path.join("data", key)
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return decode(json.dumps(data), type=SpacesData).__dict__
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load data from {key}: {str(e)}")
+
+def save_local_data(data: dict, key: str):
+    file_path = os.path.join("data", key)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save data to {key}: {str(e)}")
+
+def has_data_changed(data: dict, key: str) -> bool:
+    new_hash = compute_data_hash(data)
+    try:
+        with open(os.path.join("data", key), "r", encoding="utf-8") as f:
+            existing_data = json.load(f)
+            existing_hash = compute_data_hash(existing_data)
+            return existing_hash != new_hash
+    except FileNotFoundError:
+        return True
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check data for {key}: {str(e)}")

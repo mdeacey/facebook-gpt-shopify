@@ -1,14 +1,12 @@
 import logging
 import os
 import json
-import boto3
 import time
 from fastapi import HTTPException
 from openai import AsyncOpenAI
 from shared.tokens import TokenStorage
-from shared.utils import check_endpoint_accessibility
+from shared.utils import check_endpoint_accessibility, save_local_data, load_local_data
 from shared.config import config
-from .spaces import get_data_from_spaces
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +40,10 @@ async def generate_agent_response(page_id: str, sender_id: str, message_text: st
         logger.error(f"GenAI API health check failed: {accessibility_message}")
         raise HTTPException(status_code=500, detail=accessibility_message)
 
-    s3_client = boto3.client(
-        "s3",
-        region_name=config.spaces_region,
-        endpoint_url=config.spaces_endpoint,
-        aws_access_key_id=config.spaces_api_key,
-        aws_secret_access_key=config.spaces_api_secret
-    )
-
     shopify_data_key = f"users/{user_uuid}/shopify/data.json"
     facebook_data_key = f"users/{user_uuid}/facebook/data.json"
-    shopify_data = await get_data_from_spaces(shopify_data_key, s3_client)
-    facebook_data = await get_data_from_spaces(facebook_data_key, s3_client)
+    shopify_data = await load_local_data(shopify_data_key)
+    facebook_data = await load_local_data(facebook_data_key)
 
     shopify_metadata = shopify_data.get("metadata", {})
     shopify_products = shopify_data.get("products", {})

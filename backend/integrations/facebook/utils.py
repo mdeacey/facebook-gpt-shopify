@@ -3,13 +3,11 @@ import os
 import httpx
 import hmac
 import hashlib
-import boto3
 import time
 from datetime import datetime
 from fastapi import HTTPException, Request
 from shared.tokens import TokenStorage
-from shared.utils import retry_async
-from integrations.digitalocean.spaces import has_data_changed, upload_to_spaces
+from shared.utils import retry_async, save_local_data, load_local_data, has_data_changed
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +29,7 @@ async def exchange_code_for_token(code: str):
         return response.json()
 
 @retry_async
-async def get_facebook_data(access_token: str, user_uuid: str, s3_client: boto3.client):
+async def get_facebook_data(access_token: str, user_uuid: str):
     url = "https://graph.facebook.com/v19.0/me/accounts"
     params = {
         "access_token": access_token,
@@ -128,21 +126,13 @@ async def daily_poll():
             if not access_token or not user_uuid:
                 logger.error(f"Missing access token or user UUID for page {page_id}")
                 continue
-            session = boto3.session.Session()
-            s3_client = session.client(
-                "s3",
-                region_name=os.getenv("SPACES_REGION", "nyc3"),
-                endpoint_url=os.getenv("SPACES_ENDPOINT", "https://nyc3.digitaloceanspaces.com"),
-                aws_access_key_id=os.getenv("SPACES_API_KEY"),
-                aws_secret_access_key=os.getenv("SPACES_API_SECRET")
-            )
-            data = await get_facebook_data(access_token, user_uuid, s3_client)
+            data = await get_facebook_data(access_token, user_uuid)
             spaces_key = f"users/{user_uuid}/facebook/data.json"
-            if has_data_changed(data, spaces_key, s3_client):
-                upload_to_spaces(data, spaces_key, s3_client)
-                logger.info(f"Polled and uploaded data for page {page_id}: Success")
+            if has_data_changed(data, spaces_key):
+                save_local_data(data, spaces_key)
+                logger.info(f"Polled and saved data for page {page_id}: Success")
             else:
-                logger.info(f"Polled data for page {page_id}: No upload needed, data unchanged")
+                logger.info(f"Polled data for page {page_id}: No save needed, data unchanged")
         except Exception as e:
             logger.error(f"Daily poll failed for page {page_id}: {str(e)}")
 

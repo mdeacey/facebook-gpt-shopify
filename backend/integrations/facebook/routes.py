@@ -1,6 +1,5 @@
 import logging
 import json
-import boto3
 import time
 import hmac
 import hashlib
@@ -8,12 +7,11 @@ import httpx
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
 from .utils import get_facebook_data, register_webhooks, get_existing_subscriptions, send_facebook_message
-from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility, exchange_code_for_token, verify_hmac
+from shared.utils import generate_state_token, validate_state_token, compute_data_hash, get_previous_hash, check_endpoint_accessibility, exchange_code_for_token, verify_hmac, save_local_data, load_local_data
 from shared.sessions import SessionStorage
 from shared.tokens import TokenStorage
 from shared.config import config
 from shared.models import FacebookWebhookPayload
-from integrations.digitalocean.spaces import has_data_changed, upload_to_spaces, get_data_from_spaces
 from integrations.digitalocean.agent import generate_agent_response
 from msgspec.json import decode
 
@@ -84,16 +82,7 @@ async def oauth_callback(request: Request):
 
     token_storage.store_token("FACEBOOK_USER_ACCESS_TOKEN", token_data["access_token"], type="token")
 
-    session = boto3.session.Session()
-    s3_client = session.client(
-        "s3",
-        region_name=config.spaces_region,
-        endpoint_url=config.spaces_endpoint,
-        aws_access_key_id=config.spaces_api_key,
-        aws_secret_access_key=config.spaces_api_secret
-    )
-
-    data = await get_facebook_data(token_data["access_token"], user_uuid, s3_client)
+    data = await get_facebook_data(token_data["access_token"], user_uuid)
 
     webhook_test_results = []
     upload_status_results = []
@@ -165,7 +154,7 @@ async def oauth_callback(request: Request):
             logger.info(f"Metadata webhook test result for page {page_id}: {result}")
 
             start_time = time.time()
-            has_changed = has_data_changed(data, f"users/{user_uuid}/facebook/data.json", s3_client)
+            has_changed = has_data_changed(data, f"users/{user_uuid}/facebook/data.json")
             result = {
                 "entity_id": page_id,
                 "result": {
@@ -176,15 +165,15 @@ async def oauth_callback(request: Request):
             }
             if start_time:
                 result["result"]["response_time_ms"] = int((time.time() - start_time) * 1000)
-            previous_hash = get_previous_hash(s3_client, config.spaces_bucket, f"users/{user_uuid}/facebook/data.json")
+            previous_hash = get_previous_hash(f"users/{user_uuid}/facebook/data.json")
             if previous_hash:
                 result["result"]["previous_hash"] = previous_hash
             if has_changed:
                 try:
-                    upload_to_spaces(data, f"users/{user_uuid}/facebook/data.json", s3_client)
+                    save_local_data(data, f"users/{user_uuid}/facebook/data.json")
                     result["result"].update({
                         "status": "success",
-                        "message": "Data successfully uploaded to Spaces",
+                        "message": "Data successfully saved locally",
                         "upload_timestamp": int(time.time() * 1000),
                         "bytes_uploaded": len(json.dumps(data).encode()),
                         "data_hash": compute_data_hash(data),
@@ -220,15 +209,6 @@ async def facebook_webhook(request: Request):
     if payload.object != "page":
         raise HTTPException(status_code=400, detail="Invalid webhook object")
 
-    session = boto3.session.Session()
-    s3_client = session.client(
-        "s3",
-        region_name=config.spaces_region,
-        endpoint_url=config.spaces_endpoint,
-        aws_access_key_id=config.spaces_api_key,
-        aws_secret_access_key=config.spaces_api_secret
-    )
-
     for entry in payload.entry:
         page_id = entry.get("id")
         if not page_id:
@@ -247,7 +227,7 @@ async def facebook_webhook(request: Request):
         logger.info(f"Received webhook event for page {page_id}: {entry}")
 
         spaces_key = f"users/{user_uuid}/facebook/data.json"
-        existing_data = await get_data_from_spaces(spaces_key, s3_client) or {"data": [], "paging": {}, "conversations": {}}
+        existing_data = await load_local_data(spaces_key) or {"data": [], "paging": {}, "conversations": {}}
 
         if "messaging" in entry:
             for message_event in entry.get("messaging", []):
@@ -287,16 +267,16 @@ async def facebook_webhook(request: Request):
                 if not user_access_token:
                     logger.error(f"User access token not found for user {user_uuid}")
                     continue
-                updated_data = await get_facebook_data(user_access_token, user_uuid, s3_client)
+                updated_data = await get_facebook_data(user_access_token, user_uuid)
                 existing_data["data"] = updated_data["data"]
                 existing_data["paging"] = updated_data["paging"]
                 logger.info(f"Updated page data for page {page_id}")
             except Exception as e:
                 logger.error(f"Failed to update page data for page {page_id}: {str(e)}")
 
-        if has_data_changed(existing_data, spaces_key, s3_client):
-            upload_to_spaces(existing_data, spaces_key, s3_client)
-            logger.info(f"Uploaded data to Spaces: {spaces_key}")
+        if has_data_changed(existing_data, spaces_key):
+            save_local_data(existing_data, spaces_key)
+            logger.info(f"Saved data locally: {spaces_key}")
 
     return {"status": "success"}
 
